@@ -1,6 +1,6 @@
 import folium
 from flask import Flask
-from util.stations import load_stations
+from rebalance3.util.stations import load_stations
 
 CENTER_LAT = 43.6532
 CENTER_LON = -79.3832
@@ -85,7 +85,7 @@ html, body {
     return m
 
 
-def serve_stations_map(stations_file, host="127.0.0.1", port=8080, debug=False):
+def baseline_stations_map(stations_file, host="127.0.0.1", port=8080, debug=False):
     """
     Library entrypoint: call this and you get a running website.
     """
@@ -102,4 +102,4 @@ def serve_stations_map(stations_file, host="127.0.0.1", port=8080, debug=False):
 
 
 if __name__ == "__main__":
-    serve_stations_map("given data/station_information.json", port=8080, debug=False)
+    baseline_stations_map("given data/station_information.json", port=8080, debug=False)

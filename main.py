@@ -1,3 +1,3 @@
-from viz.stations_map import serve_stations_map
+from rebalance3 import baseline_stations_map
 
-serve_stations_map("given data/station_information.json", port=8080)
+baseline_stations_map("station_information.json", port=8080)
