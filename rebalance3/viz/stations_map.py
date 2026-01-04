@@ -1,105 +1,57 @@
+# rebalance3/viz/stations_map.py
 import folium
-from flask import Flask
+from flask import Flask, request
+from pathlib import Path
 from rebalance3.util.stations import load_stations
+
+from .state_loader import load_station_state, snap_time
+from .map_layer import add_station_markers
+from .sidebar import build_sidebar
+from .time_bar import build_time_bar
 
 CENTER_LAT = 43.6532
 CENTER_LON = -79.3832
 
-def build_stations_map(stations):
-    m = folium.Map(
-        location=[CENTER_LAT, CENTER_LON],
-        zoom_start=12,
-        tiles="cartodbpositron",
-        prefer_canvas=True,
-    )
-
-    m.get_root().html.add_child(
-        folium.Element(
-            """
-<style>
-html, body {
-  height: 100%;
-  width: 100%;
-  margin: 0;
-}
-.leaflet-container {
-  height: 100vh !important;
-  width: 100vw !important;
-}
-.leaflet-control-zoom {
-  position: fixed !important;
-  top: 15px !important;
-  right: 15px !important;
-  left: auto !important;
-}
-.leaflet-popup-content {
-  margin: 10px 12px;
-  font-family: sans-serif;
-  font-size: 12px;
-}
-</style>
-"""
-        )
-    )
-
-    for s in stations:
-        popup = f"""
-        <div style="width:220px;">
-          <b>{s["name"]}</b><br>
-          Station ID: {s["station_id"]}<br>
-          Capacity: {s["capacity"]}
-        </div>
-        """
-
-        folium.CircleMarker(
-            location=[s["lat"], s["lon"]],
-            radius=4,
-            fill=True,
-            fill_color="#333333",
-            fill_opacity=0.9,
-            weight=0,
-            popup=popup,
-        ).add_to(m)
-
-    header = """
-    <div style="
-        position:fixed;
-        top:15px;
-        left:15px;
-        z-index:1000;
-        background:rgba(255,255,255,0.95);
-        padding:12px 14px;
-        border-radius:8px;
-        box-shadow:0 1px 4px rgba(0,0,0,0.25);
-        font-family:sans-serif;
-        font-size:12px;
-    ">
-      <div style="font-weight:700;">Toronto Bike Share</div>
-      <div style="margin-top:4px;color:#444;">
-        Station locations
-      </div>
-    </div>
-    """
-    m.get_root().html.add_child(folium.Element(header))
-
-    return m
+_LIB_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_TORONTO_STATIONS_FILE = _LIB_ROOT / "station_information.json"
 
 
-def baseline_stations_map(stations_file, host="127.0.0.1", port=8080, debug=False):
-    """
-    Library entrypoint: call this and you get a running website.
-    """
+def serve_stations_map(
+    host="127.0.0.1",
+    port=8080,
+    debug=False,
+    stations_file=DEFAULT_TORONTO_STATIONS_FILE,
+    state_by_hour_csv=None,
+):
+    stations = load_stations(stations_file)
+    state, mode, valid_times = load_station_state(state_by_hour_csv)
+
     app = Flask(__name__)
 
     @app.route("/")
     def _view():
-        stations = load_stations(stations_file)
-        m = build_stations_map(stations)
+        t_req = (
+            request.args.get("t", valid_times[0], type=int)
+            if mode == "t_min"
+            else request.args.get("hour", valid_times[0], type=int)
+        )
+        t_cur = snap_time(t_req, valid_times)
+
+        m = folium.Map(
+            location=[CENTER_LAT, CENTER_LON],
+            zoom_start=12,
+            tiles="cartodbpositron",
+            prefer_canvas=True,
+        )
+
+        add_station_markers(m, stations, state, t_cur, mode)
+        m.get_root().html.add_child(build_sidebar())
+
+        if valid_times:
+            m.get_root().html.add_child(
+                build_time_bar(state, stations, valid_times, t_cur, mode)
+            )
+
         return m.get_root().render()
 
-    # run the server (blocking)
     app.run(host=host, port=port, debug=debug)
-
-
-if __name__ == "__main__":
-    baseline_stations_map("given data/station_information.json", port=8080, debug=False)
