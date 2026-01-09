@@ -1,0 +1,14 @@
+midnight mover based on week of data
+truck moving
+    when to do it
+    fuel?
+    traffic?
+    trucks available?
+    ui
+
+city heat map
+    uoft different time than rogers center
+    historic walking traffic
+
+sentiment analysis of news
+
