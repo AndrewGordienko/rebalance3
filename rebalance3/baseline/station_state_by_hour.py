@@ -2,10 +2,12 @@ import csv
 import json
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict
 
 from tqdm import tqdm
 from colorama import Fore, Style, init
+
+from rebalance3.trucks.simulator import apply_truck_rebalancing
 
 init(autoreset=True)
 
@@ -21,23 +23,21 @@ def _parse_dt(s: str) -> datetime:
 
 def build_station_state_by_hour(
     trips_csv_path: str,
-    day: str,  # "YYYY-MM-DD"
+    day: str,
     out_csv_path: str,
-    stations_file=DEFAULT_TORONTO_STATIONS_FILE,
     *,
-    initial_fill_ratio: Optional[float] = 0.60,
-    initial_bikes: Optional[Dict[str, int]] = None,
+    initial_fill_ratio: float | None,
     bucket_minutes: int = 15,
+    initial_bikes: dict | None = None,
+    trucks_per_day: int = 0,
+    truck_dispatch_minute: int = 720,  # noon
 ):
     # ----------------------------
     # Sanitize inputs
     # ----------------------------
     if initial_bikes is None:
         initial_fill_ratio = float(initial_fill_ratio)
-        if initial_fill_ratio < 0.0:
-            initial_fill_ratio = 0.0
-        if initial_fill_ratio > 1.0:
-            initial_fill_ratio = 1.0
+        initial_fill_ratio = max(0.0, min(1.0, initial_fill_ratio))
 
     bucket_minutes = int(bucket_minutes)
     if bucket_minutes <= 0:
@@ -51,26 +51,30 @@ def build_station_state_by_hour(
     day_start = datetime.fromisoformat(f"{day}T00:00:00")
     day_end_exclusive = day_start + timedelta(days=1)
 
+    # ----------------------------
+    # Load stations
+    # ----------------------------
     print(f"{Fore.CYAN}Loading station registry…{Style.RESET_ALL}")
-    with open(stations_file) as f:
+    with open(DEFAULT_TORONTO_STATIONS_FILE) as f:
         stations = json.load(f)["data"]["stations"]
 
-    station_by_id = {
+    station_capacity: Dict[str, int] = {
         str(s["station_id"]): int(s["capacity"])
         for s in stations
     }
 
+    # ----------------------------
+    # Initialize bikes
+    # ----------------------------
     bikes: Dict[str, int] = {}
 
     if initial_bikes is not None:
-        # Use optimized midnight allocation
-        for sid, cap in station_by_id.items():
+        for sid, cap in station_capacity.items():
             b = int(initial_bikes.get(sid, 0))
             bikes[sid] = max(0, min(cap, b))
         print(f"{Fore.CYAN}Using optimized midnight allocation{Style.RESET_ALL}")
     else:
-        # Baseline proportional fill
-        for sid, cap in station_by_id.items():
+        for sid, cap in station_capacity.items():
             b = int(round(cap * initial_fill_ratio))
             bikes[sid] = max(0, min(cap, b))
         print(
@@ -78,14 +82,15 @@ def build_station_state_by_hour(
             f"{initial_fill_ratio:.2f}{Style.RESET_ALL}"
         )
 
+    # ----------------------------
+    # Load trip events
+    # ----------------------------
     events = []
 
     with open(trips_csv_path) as f:
         total_rows = max(0, sum(1 for _ in f) - 1)
 
-    print(
-        f"{Fore.CYAN}Processing trips for {day}…{Style.RESET_ALL}"
-    )
+    print(f"{Fore.CYAN}Processing trips for {day}…{Style.RESET_ALL}")
 
     with open(trips_csv_path, newline="") as f:
         reader = csv.DictReader(f)
@@ -96,19 +101,22 @@ def build_station_state_by_hour(
             except Exception:
                 continue
 
-            if start_dt.date().isoformat() != day:
+            if not (day_start <= start_dt < day_end_exclusive):
                 continue
 
-            start_sid = str(row["Start Station Id"])
-            end_sid = str(row["End Station Id"])
+            start_sid = str(row.get("Start Station Id", ""))
+            end_sid = str(row.get("End Station Id", ""))
 
-            if start_sid in station_by_id:
+            if start_sid in station_capacity:
                 events.append((start_dt, "start", start_sid))
-            if end_sid in station_by_id:
+            if end_sid in station_capacity:
                 events.append((end_dt, "end", end_sid))
 
     events.sort(key=lambda x: x[0])
 
+    # ----------------------------
+    # Simulate day
+    # ----------------------------
     print(
         f"{Fore.CYAN}Simulating day "
         f"(bucket_minutes={bucket_minutes})…{Style.RESET_ALL}"
@@ -118,14 +126,16 @@ def build_station_state_by_hour(
     idx = 0
 
     bucket_count = 1440 // bucket_minutes
+
     for b in range(bucket_count):
         bucket_end = day_start + timedelta(minutes=(b + 1) * bucket_minutes)
         if bucket_end > day_end_exclusive:
             bucket_end = day_end_exclusive
 
+        # apply trip events
         while idx < len(events) and events[idx][0] < bucket_end:
             _, kind, sid = events[idx]
-            cap = station_by_id[sid]
+            cap = station_capacity[sid]
 
             if kind == "start":
                 if bikes[sid] > 0:
@@ -137,8 +147,26 @@ def build_station_state_by_hour(
             idx += 1
 
         t_min = b * bucket_minutes
+
+        # ----------------------------
+        # 🚚 TRUCK DISPATCH (once per day)
+        # ----------------------------
+        if trucks_per_day > 0 and t_min == truck_dispatch_minute:
+            print(
+                f"{Fore.MAGENTA}Dispatching "
+                f"{trucks_per_day} truck moves at t={t_min}{Style.RESET_ALL}"
+            )
+            apply_truck_rebalancing(
+                station_bikes=bikes,
+                station_capacity=station_capacity,
+                trucks_per_day=trucks_per_day,
+            )
+
         snapshots[t_min] = bikes.copy()
 
+    # ----------------------------
+    # Write CSV
+    # ----------------------------
     print(f"{Fore.CYAN}Writing {out_csv_path}…{Style.RESET_ALL}")
     with open(out_csv_path, "w", newline="") as f:
         writer = csv.writer(f)
@@ -150,7 +178,7 @@ def build_station_state_by_hour(
             for t_min, state in snapshots.items():
                 hour = t_min // 60
                 for sid, b in state.items():
-                    cap = station_by_id[sid]
+                    cap = station_capacity[sid]
                     writer.writerow([sid, hour, b, cap - b, cap])
         else:
             writer.writerow(
@@ -158,7 +186,7 @@ def build_station_state_by_hour(
             )
             for t_min, state in snapshots.items():
                 for sid, b in state.items():
-                    cap = station_by_id[sid]
+                    cap = station_capacity[sid]
                     writer.writerow([sid, t_min, b, cap - b, cap])
 
     print(f"{Fore.GREEN}Station state build complete.{Style.RESET_ALL}")

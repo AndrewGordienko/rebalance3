@@ -5,6 +5,7 @@ FULL_THRESHOLD = 0.9
 
 def build_time_bar(state, stations, valid_times, t_current, mode):
     full_counts = {}
+
     for t in valid_times:
         cnt = 0
         for s in stations:
@@ -20,14 +21,19 @@ def build_time_bar(state, stations, valid_times, t_current, mode):
     bars = []
     for t in valid_times:
         height = int((full_counts[t] / max_count) * 72)
-        label = f"{t//60:02d}:{t%60:02d}" if mode == "t_min" else f"{t:02d}:00"
+        label = (
+            f"{t//60:02d}:{t%60:02d}"
+            if mode == "t_min"
+            else f"{t:02d}:00"
+        )
 
         bars.append(f"""
         <div class="timebar-item"
-             onclick="parent.postMessage({{ type: 'set-time', value: {t} }}, '*')"
-             data-label="{label}">
+             data-time="{t}"
+             data-label="{label}"
+             onclick="setTime({t})">
           <div class="timebar-bar"
-               style="height:{height}px; opacity:{'1.0' if t==t_current else '0.55'};">
+               style="height:{height}px; opacity:{'1.0' if t == t_current else '0.55'};">
           </div>
         </div>
         """)
@@ -38,7 +44,7 @@ def build_time_bar(state, stations, valid_times, t_current, mode):
   position: absolute;
   left: 0;
   right: 0;
-  bottom: 14px;            /* <-- ON the map, not under it */
+  bottom: 14px;
   height: 110px;
   z-index: 1200;
   pointer-events: auto;
@@ -72,7 +78,7 @@ def build_time_bar(state, stations, valid_times, t_current, mode):
 
 .timebar-bar {{
   width: 100%;
-  background: #d73027;   /* RED */
+  background: #d73027; /* RED */
   border-radius: 2px;
 }}
 
@@ -86,6 +92,7 @@ def build_time_bar(state, stations, valid_times, t_current, mode):
   font-size: 12px;
   font-weight: 600;
   display: none;
+  pointer-events: none;
 }}
 </style>
 
@@ -99,6 +106,22 @@ def build_time_bar(state, stations, valid_times, t_current, mode):
 </div>
 
 <script>
+function setTime(value) {{
+  // Embedded comparison view → notify parent
+  if (window.parent && window.parent !== window) {{
+    window.parent.postMessage(
+      {{ type: "set-time", value: value }},
+      "*"
+    );
+  }} else {{
+    // Standalone map fallback
+    const url = new URL(window.location.href);
+    const key = url.searchParams.has("t") ? "t" : "hour";
+    url.searchParams.set(key, value);
+    window.location.href = url.toString();
+  }}
+}}
+
 function timebarMove(evt) {{
   const label = document.getElementById("timebar-label");
   const item = evt.target.closest(".timebar-item");

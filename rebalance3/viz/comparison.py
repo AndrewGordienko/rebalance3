@@ -69,7 +69,6 @@ html, body {{
   background: white;
 }}
 
-/* ===== PAGE TITLE ===== */
 #page-title {{
   max-width: 1800px;
   margin: 16px auto 4px auto;
@@ -82,12 +81,11 @@ html, body {{
   margin: 0;
 }}
 
-/* ===== MAPS ===== */
 #maps {{
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 24px;
-  padding: 16px 24px 0 24px;   /* 👈 ZERO bottom padding */
+  padding: 16px 24px 0 24px;
   max-width: 1800px;
   margin: 0 auto;
 }}
@@ -97,21 +95,14 @@ html, body {{
   height: 75vh;
   min-height: 520px;
   border: 0;
-  box-shadow: none;
   background: transparent;
 }}
 
-/* ===== GRAPHS HARD RESET ===== */
 #graphs-root {{
   margin-top: 0 !important;
   padding-top: 0 !important;
 }}
 
-#graphs-root > * {{
-  margin-top: 0 !important;
-}}
-
-/* ===== RESPONSIVE ===== */
 @media (max-width: 1100px) {{
   #maps {{
     grid-template-columns: 1fr;
@@ -123,10 +114,14 @@ html, body {{
 window.addEventListener("message", (e) => {{
   if (!e.data || e.data.type !== "set-time") return;
 
-  const url = new URL(window.location.href);
-  const key = url.searchParams.has("t") ? "t" : "hour";
-  url.searchParams.set(key, e.data.value);
-  window.location.href = url.toString();
+  const t = e.data.value;
+
+  document.querySelectorAll(".map-frame").forEach((iframe) => {{
+    const url = new URL(iframe.src);
+    const key = url.searchParams.has("t") ? "t" : "hour";
+    url.searchParams.set(key, t);
+    iframe.src = url.toString();
+  }});
 }});
 </script>
 </head>
@@ -142,7 +137,6 @@ window.addEventListener("message", (e) => {{
   <iframe class="map-frame" src="/map/1?{qp}"></iframe>
 </div>
 
-<!-- FORCE GRAPH CONTAINER -->
 <div id="graphs-root">
   {graphs_html}
 </div>
