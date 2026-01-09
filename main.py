@@ -18,7 +18,7 @@ build_station_state_by_hour(
 serve_stations_map(port=8080, state_by_hour_csv="station_state_by_hour.csv")
 """
 
-"""
+
 # Midnight optimization example for September 1, 2024
 result = optimize_midnight_from_trips(
         trips_csv_path=TRIPS,
@@ -43,8 +43,10 @@ build_station_state_by_hour(
         bucket_minutes=result.bucket_minutes,
         initial_bikes=result.bikes_by_station
     )
-"""
+
 serve_stations_map(
     port=8080,
-    state_by_hour_csv="station_state_by_hour.csv"
+    state_by_hour_csv="station_state_by_hour.csv",
+    title="Midnight optimization — September 1, 2024",
+    graphs=False,
 )
