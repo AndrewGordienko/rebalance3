@@ -6,7 +6,7 @@ import json
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, Iterable, List, Tuple, Optional
 
 try:
     from tqdm import tqdm
@@ -440,6 +440,72 @@ def optimize_midnight_from_trips(
         delta_by_station=delta,
         capacity_by_station=cap,
         total_bikes=int(total_bikes),
+        bucket_minutes=bucket_minutes,
+        empty_threshold=empty_threshold,
+        full_threshold=full_threshold,
+        w_empty=w_empty,
+        w_full=w_full,
+        max_moves=max_moves,
+    )
+
+def optimize_midnight_from_trips(
+    trips_csv_path: str | Path,
+    *,
+    day: str | None = None,
+    days: Iterable[str] | None = None,
+    bucket_minutes: int = 15,
+    total_bikes: int | None = None,
+    total_bikes_ratio: float | None = 0.60,
+    empty_threshold: float = 0.10,
+    full_threshold: float = 0.90,
+    w_empty: float = 1.0,
+    w_full: float = 1.0,
+    max_moves: int | None = None,
+) -> MidnightOptimizeResult:
+    """
+    If `day` is provided → behaves exactly like before.
+    If `days` is provided → optimizes against the average cost across days.
+    """
+
+    if (day is None) == (days is None):
+        raise ValueError("Provide exactly one of `day` or `days`")
+
+    cap = load_capacity_from_station_information(DEFAULT_TORONTO_STATIONS_FILE)
+
+    # ---- collect per-day deltas ----
+    day_list = [day] if day is not None else list(days)
+    deltas = []
+
+    for d in day_list:
+        delta, _ = build_bucket_flows(
+            trips_csv_path=trips_csv_path,
+            day=d,
+            capacity_by_station=cap,
+            bucket_minutes=bucket_minutes,
+        )
+        deltas.append(delta)
+
+    # ---- choose total bikes ----
+    if total_bikes is None:
+        ratio = 0.60 if total_bikes_ratio is None else float(total_bikes_ratio)
+        total_bikes = int(round(sum(cap.values()) * max(0.0, min(1.0, ratio))))
+
+    # ---- aggregate cost across days ----
+    def averaged_delta():
+        out = {}
+        for sid in cap:
+            series = [d[sid] for d in deltas if sid in d]
+            if not series:
+                continue
+            out[sid] = [
+                sum(vals) / len(vals) for vals in zip(*series)
+            ]
+        return out
+
+    return optimize_midnight_greedy(
+        delta_by_station=averaged_delta(),
+        capacity_by_station=cap,
+        total_bikes=total_bikes,
         bucket_minutes=bucket_minutes,
         empty_threshold=empty_threshold,
         full_threshold=full_threshold,

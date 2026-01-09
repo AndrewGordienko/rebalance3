@@ -7,3 +7,4 @@ class Scenario:
     state_csv: Path
     bucket_minutes: int
     meta: dict
+    state_csv: str

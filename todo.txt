@@ -1,4 +1,5 @@
-midnight mover based on week of data
+midnight algorithm more performant?
+
 truck moving
     when to do it
     fuel?
