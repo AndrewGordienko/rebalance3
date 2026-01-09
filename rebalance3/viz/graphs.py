@@ -1,96 +1,96 @@
-# rebalance3/viz/graphs.py
 import folium
 
 EMPTY_THRESHOLD = 0.10
 FULL_THRESHOLD = 0.90
 
 
-def build_summary_graphs(state, stations, valid_times, mode):
-    labels = []
-    empty_counts = []
-    full_counts = []
-
+def _counts(state, stations, valid_times):
+    empty, full = [], []
     for t in valid_times:
-        empty = 0
-        full = 0
-
+        e = f = 0
         for s in stations:
             sid = str(s["station_id"])
             st = state.get((sid, t))
-            if not st or not st["capacity"]:
+            if not st or not st.get("capacity"):
                 continue
+            r = st["bikes"] / st["capacity"]
+            if r <= EMPTY_THRESHOLD:
+                e += 1
+            elif r >= FULL_THRESHOLD:
+                f += 1
+        empty.append(e)
+        full.append(f)
+    return empty, full
 
-            ratio = st["bikes"] / st["capacity"]
-            if ratio <= EMPTY_THRESHOLD:
-                empty += 1
-            elif ratio >= FULL_THRESHOLD:
-                full += 1
 
-        empty_counts.append(empty)
-        full_counts.append(full)
+def _labels(valid_times, mode):
+    return [f"{t//60:02d}:{t%60:02d}" if mode == "t_min" else f"{t:02d}:00"
+            for t in valid_times]
 
-        labels.append(
-            f"{t//60:02d}:{t%60:02d}" if mode == "t_min" else f"{t:02d}:00"
-        )
+
+def build_comparison_graphs(states, stations, valid_times, mode, scenario_names):
+    labels = _labels(valid_times, mode)
+
+    a_empty, a_full = _counts(states[0], stations, valid_times)
+    b_empty, b_full = _counts(states[1], stations, valid_times)
 
     return folium.Element(f"""
-<div id="graphs">
+<style>
+.chart-box {{
+  height: 320px;
+  position: relative;
+}}
+.chart-box canvas {{
+  width: 100% !important;
+  height: 100% !important;
+}}
+</style>
+
+<div style="max-width:1600px; margin:40px auto 120px auto; padding:0 24px;">
   <h2 style="font-family:sans-serif; margin-bottom:24px;">
-    System stress over time
+    System stress comparison
   </h2>
 
-  <div id="graphs-grid">
-    <canvas id="emptyChart"></canvas>
-    <canvas id="fullChart"></canvas>
+  <div style="display:grid; grid-template-columns:1fr 1fr; gap:24px;">
+    <div><b>{scenario_names[0]} — Empty</b><div class="chart-box"><canvas id="a_empty"></canvas></div></div>
+    <div><b>{scenario_names[0]} — Full</b><div class="chart-box"><canvas id="a_full"></canvas></div></div>
+    <div><b>{scenario_names[1]} — Empty</b><div class="chart-box"><canvas id="b_empty"></canvas></div></div>
+    <div><b>{scenario_names[1]} — Full</b><div class="chart-box"><canvas id="b_full"></canvas></div></div>
   </div>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
-const labels = {labels};
+(function() {{
+  const labels = {labels};
 
-new Chart(document.getElementById("emptyChart"), {{
-  type: "line",
-  data: {{
-    labels,
-    datasets: [{{
-      label: "Empty stations",
-      data: {empty_counts},
-      borderColor: "#d73027",
-      backgroundColor: "rgba(215,48,39,0.15)",
-      fill: true,
-      tension: 0.25
-    }}]
-  }},
-  options: {{
-    responsive: true,
-    maintainAspectRatio: false,
-    scales: {{
-      y: {{ beginAtZero: true }}
-    }}
+  function draw(id, label, data, color, fill) {{
+    new Chart(document.getElementById(id), {{
+      type: "line",
+      data: {{
+        labels,
+        datasets: [{{
+          label,
+          data,
+          borderColor: color,
+          backgroundColor: fill,
+          fill: true,
+          tension: 0.25,
+          pointRadius: 0
+        }}]
+      }},
+      options: {{
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: {{ y: {{ beginAtZero: true }} }}
+      }}
+    }});
   }}
-}});
 
-new Chart(document.getElementById("fullChart"), {{
-  type: "line",
-  data: {{
-    labels,
-    datasets: [{{
-      label: "Full stations",
-      data: {full_counts},
-      borderColor: "#4575b4",
-      backgroundColor: "rgba(69,117,180,0.15)",
-      fill: true,
-      tension: 0.25
-    }}]
-  }},
-  options: {{
-    responsive: true,
-    maintainAspectRatio: false,
-    scales: {{
-      y: {{ beginAtZero: true }}
-    }}
-  }}
-}});
+  draw("a_empty", "Empty", {a_empty}, "#d73027", "rgba(215,48,39,0.15)");
+  draw("a_full",  "Full",  {a_full},  "#4575b4", "rgba(69,117,180,0.15)");
+  draw("b_empty", "Empty", {b_empty}, "#d73027", "rgba(215,48,39,0.15)");
+  draw("b_full",  "Full",  {b_full},  "#4575b4", "rgba(69,117,180,0.15)");
+}})();
 </script>
 """)
