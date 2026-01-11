@@ -2,12 +2,13 @@ import csv
 import json
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict
+from typing import Dict, List
 
 from tqdm import tqdm
 from colorama import Fore, Style, init
 
 from rebalance3.trucks.simulator import apply_truck_rebalancing
+from rebalance3.trucks.types import TruckMove
 
 init(autoreset=True)
 
@@ -30,7 +31,6 @@ def build_station_state_by_hour(
     bucket_minutes: int = 15,
     initial_bikes: dict | None = None,
     trucks_per_day: int = 0,
-    truck_dispatch_minute: int = 720,  # noon
 ):
     # ----------------------------
     # Sanitize inputs
@@ -39,17 +39,11 @@ def build_station_state_by_hour(
         initial_fill_ratio = float(initial_fill_ratio)
         initial_fill_ratio = max(0.0, min(1.0, initial_fill_ratio))
 
-    bucket_minutes = int(bucket_minutes)
-    if bucket_minutes <= 0:
-        bucket_minutes = 15
     if 1440 % bucket_minutes != 0:
-        raise ValueError(
-            "bucket_minutes must divide 1440 "
-            "(e.g. 60, 30, 15, 10, 5, 1)"
-        )
+        raise ValueError("bucket_minutes must divide 1440")
 
     day_start = datetime.fromisoformat(f"{day}T00:00:00")
-    day_end_exclusive = day_start + timedelta(days=1)
+    day_end = day_start + timedelta(days=1)
 
     # ----------------------------
     # Load stations
@@ -70,13 +64,11 @@ def build_station_state_by_hour(
 
     if initial_bikes is not None:
         for sid, cap in station_capacity.items():
-            b = int(initial_bikes.get(sid, 0))
-            bikes[sid] = max(0, min(cap, b))
+            bikes[sid] = max(0, min(cap, int(initial_bikes.get(sid, 0))))
         print(f"{Fore.CYAN}Using optimized midnight allocation{Style.RESET_ALL}")
     else:
         for sid, cap in station_capacity.items():
-            b = int(round(cap * initial_fill_ratio))
-            bikes[sid] = max(0, min(cap, b))
+            bikes[sid] = int(round(cap * initial_fill_ratio))
         print(
             f"{Fore.CYAN}Using baseline fill ratio "
             f"{initial_fill_ratio:.2f}{Style.RESET_ALL}"
@@ -101,7 +93,7 @@ def build_station_state_by_hour(
             except Exception:
                 continue
 
-            if not (day_start <= start_dt < day_end_exclusive):
+            if not (day_start <= start_dt < day_end):
                 continue
 
             start_sid = str(row.get("Start Station Id", ""))
@@ -124,43 +116,43 @@ def build_station_state_by_hour(
 
     snapshots = {}
     idx = 0
-
     bucket_count = 1440 // bucket_minutes
 
-    for b in range(bucket_count):
-        bucket_end = day_start + timedelta(minutes=(b + 1) * bucket_minutes)
-        if bucket_end > day_end_exclusive:
-            bucket_end = day_end_exclusive
+    trucks_remaining = trucks_per_day
+    all_truck_moves: List[TruckMove] = []
 
-        # apply trip events
+    for b in range(bucket_count):
+        t_min = b * bucket_minutes
+        bucket_end = day_start + timedelta(minutes=(b + 1) * bucket_minutes)
+
+        # ---- apply trip events ----
         while idx < len(events) and events[idx][0] < bucket_end:
             _, kind, sid = events[idx]
             cap = station_capacity[sid]
 
-            if kind == "start":
-                if bikes[sid] > 0:
-                    bikes[sid] -= 1
-            else:
-                if bikes[sid] < cap:
-                    bikes[sid] += 1
+            if kind == "start" and bikes[sid] > 0:
+                bikes[sid] -= 1
+            elif kind == "end" and bikes[sid] < cap:
+                bikes[sid] += 1
 
             idx += 1
 
-        t_min = b * bucket_minutes
-
-        # ----------------------------
-        # 🚚 TRUCK DISPATCH (once per day)
-        # ----------------------------
-        if trucks_per_day > 0 and t_min == truck_dispatch_minute:
-            print(
-                f"{Fore.MAGENTA}Dispatching "
-                f"{trucks_per_day} truck moves at t={t_min}{Style.RESET_ALL}"
-            )
-            apply_truck_rebalancing(
+        # ---- 🚚 TRUCK INTERVENTION (AT MOST 1 MOVE PER BUCKET) ----
+        if trucks_remaining > 0:
+            moves = apply_truck_rebalancing(
                 station_bikes=bikes,
                 station_capacity=station_capacity,
-                trucks_per_day=trucks_per_day,
+                t_min=t_min,
+                moves_available=1,     # key: spread trucks over the day
+                empty_thr=0.20,
+                full_thr=0.80,
+                target_thr=0.50,
+                truck_cap=20,
             )
+
+            if moves:
+                trucks_remaining -= len(moves)
+                all_truck_moves.extend(moves)
 
         snapshots[t_min] = bikes.copy()
 
@@ -172,21 +164,22 @@ def build_station_state_by_hour(
         writer = csv.writer(f)
 
         if bucket_minutes == 60:
-            writer.writerow(
-                ["station_id", "hour", "bikes", "empty_docks", "capacity"]
-            )
+            writer.writerow(["station_id", "hour", "bikes", "empty_docks", "capacity"])
             for t_min, state in snapshots.items():
                 hour = t_min // 60
                 for sid, b in state.items():
                     cap = station_capacity[sid]
                     writer.writerow([sid, hour, b, cap - b, cap])
         else:
-            writer.writerow(
-                ["station_id", "t_min", "bikes", "empty_docks", "capacity"]
-            )
+            writer.writerow(["station_id", "t_min", "bikes", "empty_docks", "capacity"])
             for t_min, state in snapshots.items():
                 for sid, b in state.items():
                     cap = station_capacity[sid]
                     writer.writerow([sid, t_min, b, cap - b, cap])
 
+    print(
+        f"{Fore.MAGENTA}Dispatched {len(all_truck_moves)} truck moves total{Style.RESET_ALL}"
+    )
     print(f"{Fore.GREEN}Station state build complete.{Style.RESET_ALL}")
+
+    return all_truck_moves

@@ -1,4 +1,3 @@
-# rebalance3/trucks/policy.py
 from typing import Dict, List
 from .types import TruckMove
 
@@ -6,33 +5,24 @@ def greedy_threshold_policy(
     station_bikes: Dict[str, int],
     station_capacity: Dict[str, int],
     *,
+    t_min: int,
     moves_available: int,
     empty_thr: float = 0.10,
     full_thr: float = 0.90,
     target_thr: float = 0.50,
     truck_cap: int = 20,
 ) -> List[TruckMove]:
-    """
-    Decide up to `moves_available` bike transfers.
-    """
-
     moves: List[TruckMove] = []
 
-    def ratio(sid):
-        cap = station_capacity[sid]
-        return station_bikes[sid] / cap if cap > 0 else 0.0
+    def ratio(sid: str) -> float:
+        cap = station_capacity.get(sid, 0)
+        if cap <= 0:
+            return 0.0
+        return station_bikes.get(sid, 0) / cap
 
-    deficit = [
-        sid for sid in station_bikes
-        if ratio(sid) < empty_thr
-    ]
+    deficit = [sid for sid in station_bikes if ratio(sid) < empty_thr]
+    surplus = [sid for sid in station_bikes if ratio(sid) > full_thr]
 
-    surplus = [
-        sid for sid in station_bikes
-        if ratio(sid) > full_thr
-    ]
-
-    # sort worst-first
     deficit.sort(key=ratio)
     surplus.sort(key=ratio, reverse=True)
 
@@ -54,26 +44,24 @@ def greedy_threshold_policy(
             max(0, available_from),
             max(0, desired_to - station_bikes[to_sid]),
         )
-
         if bikes <= 0:
             break
 
-        # apply move immediately (important)
         station_bikes[from_sid] -= bikes
         station_bikes[to_sid] += bikes
 
         moves.append(
             TruckMove(
+                t_min=t_min,
                 from_station=from_sid,
                 to_station=to_sid,
                 bikes=bikes,
             )
         )
 
-        # re-sort affected stations
+        # refresh lists
         deficit = [sid for sid in deficit if ratio(sid) < empty_thr]
         surplus = [sid for sid in surplus if ratio(sid) > full_thr]
-
         deficit.sort(key=ratio)
         surplus.sort(key=ratio, reverse=True)
 

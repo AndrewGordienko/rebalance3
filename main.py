@@ -13,6 +13,7 @@ baseline = baseline_scenario(
     out_csv="baseline_state.csv",
 )
 
+
 # ---- baseline + trucks ----
 baseline_trucks = truck_scenario(
     name="Baseline + trucks",
@@ -30,9 +31,11 @@ print(f"\nTruck moves for {baseline_trucks.name}:\n")
 for i, m in enumerate(moves, 1):
     print(
         f"{i:02d}. "
+        f"t={m.t_min:4d} min | "
         f"{m.from_station} → {m.to_station} "
         f"({m.bikes} bikes)"
     )
+
 
 serve_comparison(
     scenarios=[baseline, baseline_trucks],

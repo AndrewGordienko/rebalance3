@@ -11,34 +11,43 @@ def build_time_bar(state, stations, valid_times, t_current, mode):
         for s in stations:
             sid = str(s["station_id"])
             st = state.get((sid, t))
-            if st and st["capacity"]:
-                if st["bikes"] / st["capacity"] >= FULL_THRESHOLD:
-                    cnt += 1
+            if not st:
+                continue
+            cap = st.get("capacity", 0)
+            if cap > 0 and st["bikes"] / cap >= FULL_THRESHOLD:
+                cnt += 1
         full_counts[t] = cnt
 
-    max_count = max(full_counts.values()) if full_counts else 1
+    # ---- SAFE NORMALIZATION ----
+    max_count = max(full_counts.values(), default=0)
 
     bars = []
     for t in valid_times:
-        height = int((full_counts[t] / max_count) * 72)
+        if max_count > 0:
+            height = int((full_counts[t] / max_count) * 72)
+        else:
+            height = 0
+
         label = (
-            f"{t//60:02d}:{t%60:02d}"
+            f"{t // 60:02d}:{t % 60:02d}"
             if mode == "t_min"
             else f"{t:02d}:00"
         )
 
-        bars.append(f"""
-        <div class="timebar-item"
-             data-time="{t}"
-             data-label="{label}"
-             onclick="setTime({t})">
-          <div class="timebar-bar"
-               style="height:{height}px; opacity:{'1.0' if t == t_current else '0.55'};">
-          </div>
-        </div>
-        """)
+        bars.append(
+            f"""
+            <div class="timebar-item"
+                 onclick="parent.postMessage({{ type: 'set-time', value: {t} }}, '*')"
+                 data-label="{label}">
+              <div class="timebar-bar"
+                   style="height:{height}px; opacity:{'1.0' if t == t_current else '0.55'};">
+              </div>
+            </div>
+            """
+        )
 
-    return folium.Element(f"""
+    return folium.Element(
+        f"""
 <style>
 #timebar {{
   position: absolute;
@@ -78,7 +87,7 @@ def build_time_bar(state, stations, valid_times, t_current, mode):
 
 .timebar-bar {{
   width: 100%;
-  background: #d73027; /* RED */
+  background: #d73027;
   border-radius: 2px;
 }}
 
@@ -92,7 +101,6 @@ def build_time_bar(state, stations, valid_times, t_current, mode):
   font-size: 12px;
   font-weight: 600;
   display: none;
-  pointer-events: none;
 }}
 </style>
 
@@ -106,22 +114,6 @@ def build_time_bar(state, stations, valid_times, t_current, mode):
 </div>
 
 <script>
-function setTime(value) {{
-  // Embedded comparison view → notify parent
-  if (window.parent && window.parent !== window) {{
-    window.parent.postMessage(
-      {{ type: "set-time", value: value }},
-      "*"
-    );
-  }} else {{
-    // Standalone map fallback
-    const url = new URL(window.location.href);
-    const key = url.searchParams.has("t") ? "t" : "hour";
-    url.searchParams.set(key, value);
-    window.location.href = url.toString();
-  }}
-}}
-
 function timebarMove(evt) {{
   const label = document.getElementById("timebar-label");
   const item = evt.target.closest(".timebar-item");
@@ -139,4 +131,5 @@ function timebarHide() {{
   document.getElementById("timebar-label").style.display = "none";
 }}
 </script>
-""")
+"""
+    )
