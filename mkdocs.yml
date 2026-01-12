@@ -1,0 +1,35 @@
+site_name: rebalance3 docs
+site_description: Bike-share rebalancing simulator and visualization framework
+site_author: Andrew Gordienko
+
+theme:
+  name: material
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.expand
+    - navigation.sections
+    - navigation.indexes
+    - content.code.copy
+    - search.highlight
+  palette:
+    scheme: slate
+
+nav:
+  - Home: index.md
+  - Quickstart: quickstart.md
+  - Scenarios:
+      - Baseline: scenarios/baseline.md
+      - Midnight Optimization: scenarios/midnight.md
+      - Truck Rebalancing: scenarios/trucks.md
+  - Simulation:
+      - Time Model: simulation/time_model.md
+  - Visualization:
+      - Overview: visualization/overview.md
+      - Maps: visualization/maps.md
+      - Graphs: visualization/graphs.md
+  - API Reference:
+      - Scenarios: api/scenarios.md
+
+plugins:
+  - search

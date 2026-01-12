@@ -1,0 +1,3 @@
+# Graphs
+
+Scenario comparison graphs.
