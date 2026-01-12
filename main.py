@@ -36,6 +36,7 @@ for i, m in enumerate(moves, 1):
         f"({m.bikes} bikes)"
     )
 
+print(sorted(set(m.t_min for m in baseline_trucks.meta["truck_moves"]))[:10])
 
 serve_comparison(
     scenarios=[baseline, baseline_trucks],

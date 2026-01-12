@@ -32,12 +32,11 @@ def build_station_state_by_hour(
     initial_bikes: dict | None = None,
     trucks_per_day: int = 0,
 ):
-    # ----------------------------
-    # Sanitize inputs
-    # ----------------------------
+    # -------------------------------------------------
+    # Input checks
+    # -------------------------------------------------
     if initial_bikes is None:
-        initial_fill_ratio = float(initial_fill_ratio)
-        initial_fill_ratio = max(0.0, min(1.0, initial_fill_ratio))
+        initial_fill_ratio = max(0.0, min(1.0, float(initial_fill_ratio)))
 
     if 1440 % bucket_minutes != 0:
         raise ValueError("bucket_minutes must divide 1440")
@@ -45,9 +44,9 @@ def build_station_state_by_hour(
     day_start = datetime.fromisoformat(f"{day}T00:00:00")
     day_end = day_start + timedelta(days=1)
 
-    # ----------------------------
+    # -------------------------------------------------
     # Load stations
-    # ----------------------------
+    # -------------------------------------------------
     print(f"{Fore.CYAN}Loading station registry…{Style.RESET_ALL}")
     with open(DEFAULT_TORONTO_STATIONS_FILE) as f:
         stations = json.load(f)["data"]["stations"]
@@ -57,9 +56,9 @@ def build_station_state_by_hour(
         for s in stations
     }
 
-    # ----------------------------
+    # -------------------------------------------------
     # Initialize bikes
-    # ----------------------------
+    # -------------------------------------------------
     bikes: Dict[str, int] = {}
 
     if initial_bikes is not None:
@@ -74,9 +73,9 @@ def build_station_state_by_hour(
             f"{initial_fill_ratio:.2f}{Style.RESET_ALL}"
         )
 
-    # ----------------------------
+    # -------------------------------------------------
     # Load trip events
-    # ----------------------------
+    # -------------------------------------------------
     events = []
 
     with open(trips_csv_path) as f:
@@ -96,19 +95,19 @@ def build_station_state_by_hour(
             if not (day_start <= start_dt < day_end):
                 continue
 
-            start_sid = str(row.get("Start Station Id", ""))
-            end_sid = str(row.get("End Station Id", ""))
+            s0 = str(row.get("Start Station Id", ""))
+            s1 = str(row.get("End Station Id", ""))
 
-            if start_sid in station_capacity:
-                events.append((start_dt, "start", start_sid))
-            if end_sid in station_capacity:
-                events.append((end_dt, "end", end_sid))
+            if s0 in station_capacity:
+                events.append((start_dt, "start", s0))
+            if s1 in station_capacity:
+                events.append((end_dt, "end", s1))
 
     events.sort(key=lambda x: x[0])
 
-    # ----------------------------
+    # -------------------------------------------------
     # Simulate day
-    # ----------------------------
+    # -------------------------------------------------
     print(
         f"{Fore.CYAN}Simulating day "
         f"(bucket_minutes={bucket_minutes})…{Style.RESET_ALL}"
@@ -137,48 +136,54 @@ def build_station_state_by_hour(
 
             idx += 1
 
-        # ---- 🚚 TRUCK INTERVENTION (AT MOST 1 MOVE PER BUCKET) ----
+        # ---- 🚚 truck dispatch (max ONE per bucket) ----
         if trucks_remaining > 0:
             moves = apply_truck_rebalancing(
                 station_bikes=bikes,
                 station_capacity=station_capacity,
-                t_min=t_min,
-                moves_available=1,     # key: spread trucks over the day
+                moves_available=1,        # spread over time
                 empty_thr=0.20,
                 full_thr=0.80,
                 target_thr=0.50,
                 truck_cap=20,
             )
 
-            if moves:
-                trucks_remaining -= len(moves)
-                all_truck_moves.extend(moves)
+            for m in moves:
+                m.t_min = t_min           # 🔑 critical for map alignment
+                all_truck_moves.append(m)
+
+            trucks_remaining -= len(moves)
 
         snapshots[t_min] = bikes.copy()
 
-    # ----------------------------
+    # -------------------------------------------------
     # Write CSV
-    # ----------------------------
+    # -------------------------------------------------
     print(f"{Fore.CYAN}Writing {out_csv_path}…{Style.RESET_ALL}")
     with open(out_csv_path, "w", newline="") as f:
         writer = csv.writer(f)
 
         if bucket_minutes == 60:
-            writer.writerow(["station_id", "hour", "bikes", "empty_docks", "capacity"])
+            writer.writerow(
+                ["station_id", "hour", "bikes", "empty_docks", "capacity"]
+            )
             for t_min, state in snapshots.items():
                 hour = t_min // 60
                 for sid, b in state.items():
                     cap = station_capacity[sid]
                     writer.writerow([sid, hour, b, cap - b, cap])
         else:
-            writer.writerow(["station_id", "t_min", "bikes", "empty_docks", "capacity"])
+            writer.writerow(
+                ["station_id", "t_min", "bikes", "empty_docks", "capacity"]
+            )
             for t_min, state in snapshots.items():
                 for sid, b in state.items():
                     cap = station_capacity[sid]
                     writer.writerow([sid, t_min, b, cap - b, cap])
 
     print(
-        f"{Fore.MAGENTA}Dispatched {len(all_truck_moves)} truck moves total{Style.RESET_ALL}"
+        f"{Fore.MAGENTA}Dispatched {len(all_truck_moves)} truck moves total"
+        f"{Style.RESET_ALL}"
     )
     print(f"{Fore.GREEN}Station state build complete.{Style.RESET_ALL}")
 

@@ -151,6 +151,7 @@ window.addEventListener("message", (e) => {{
             return "Scenario index out of range", 404
 
         t_cur = _resolve_time()
+        scenario = scenarios[i]
 
         return _build_map_document(
             stations=stations,
@@ -158,7 +159,8 @@ window.addEventListener("message", (e) => {{
             mode=mode,
             valid_times=valid_times,
             t_cur=t_cur,
-            title=scenarios[i].name,
+            title=scenario.name,
+            truck_moves=scenario.meta.get("truck_moves"),  # 🔑 FIX
         )
 
     app.run(host=host, port=port)

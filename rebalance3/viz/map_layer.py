@@ -1,6 +1,5 @@
-# rebalance3/viz/map_layer.py
 import folium
-from folium import PolyLine
+from folium import PolyLine, RegularPolygonMarker
 
 from rebalance3.trucks.types import TruckMove
 
@@ -9,7 +8,7 @@ FULL_THRESHOLD = 0.9
 
 
 # ============================================================
-# STATIONS — KEEP EXACT DESIGN (UNCHANGED)
+# STATIONS — KEEP DESIGN (UNCHANGED)
 # ============================================================
 def add_station_markers(m, stations, state, t_current, mode):
     for s in stations:
@@ -54,14 +53,16 @@ def add_station_markers(m, stations, state, t_current, mode):
 
 
 # ============================================================
-# TRUCK MOVES — VERY OBVIOUS VISUALIZATION
+# TRUCK MOVES — CLEAR + DIRECTIONAL
 # ============================================================
 def add_truck_moves(m, stations, truck_moves, t_cur):
     """
-    Draw truck moves at time t_cur with:
-      - thick black line (direction implied)
-      - BIG pickup circle
-      - BIG dropoff circle
+    Visual encoding:
+      - RED ring: pickup station
+      - GREEN ring: dropoff station
+      - BLACK line: movement
+      - GREEN triangle: direction arrow
+      - Line thickness ~ bikes moved
     """
 
     if not truck_moves:
@@ -81,36 +82,50 @@ def add_truck_moves(m, stations, truck_moves, t_cur):
         if not src or not dst:
             continue
 
-        # -------- line (movement) --------
+        bikes = move.bikes
+        weight = min(2 + bikes / 4, 8)  # scale thickness, capped
+
+        # ---- movement line ----
         PolyLine(
             locations=[src, dst],
-            color="#000000",
-            weight=4,
-            opacity=0.95,
+            color="#111111",
+            weight=weight,
+            opacity=0.9,
             tooltip=(
-                f"Truck move<br>"
-                f"{move.from_station} → {move.to_station}<br>"
-                f"{move.bikes} bikes"
+                f"<b>Truck move</b><br>"
+                f"Pickup: {move.from_station}<br>"
+                f"Dropoff: {move.to_station}<br>"
+                f"Bikes moved: {bikes}"
             ),
         ).add_to(m)
 
-        # -------- pickup ring --------
+        # ---- pickup (RED ring) ----
         folium.CircleMarker(
             location=src,
             radius=10,
-            color="#000000",
+            color="#d73027",
             weight=3,
             fill=False,
-            tooltip=f"Pickup: {move.from_station}",
+            tooltip=f"Pickup station ({bikes} bikes removed)",
         ).add_to(m)
 
-        # -------- dropoff ring --------
+        # ---- dropoff (GREEN ring) ----
         folium.CircleMarker(
             location=dst,
             radius=10,
-            color="#000000",
+            color="#1a9850",
             weight=3,
             fill=False,
-            dash_array="4,4",
-            tooltip=f"Dropoff: {move.to_station}",
+            tooltip=f"Dropoff station ({bikes} bikes added)",
+        ).add_to(m)
+
+        # ---- direction arrow (triangle at destination) ----
+        RegularPolygonMarker(
+            location=dst,
+            number_of_sides=3,
+            radius=6,
+            rotation=0,
+            color="#1a9850",
+            fill_color="#1a9850",
+            fill_opacity=0.9,
         ).add_to(m)

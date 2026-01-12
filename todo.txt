@@ -21,3 +21,4 @@ why are the bikes stop moving at 210 minutes
 performance seems bad
 draw the circles - show where the bikes are going
 custom simulator for bike moving
+need docs
