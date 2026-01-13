@@ -1,8 +1,11 @@
+# rebalance3/scenarios/trucks.py
 from pathlib import Path
 
 from .base import Scenario
 from rebalance3.baseline.station_state_by_hour import build_station_state_by_hour
 from rebalance3.util.load_bikes import load_initial_bikes_from_csv
+
+from rebalance3.trucks.day_planner import plan_truck_moves_for_day
 
 
 def truck_scenario(
@@ -17,17 +20,27 @@ def truck_scenario(
     """
     Apply truck rebalancing on top of an existing scenario.
 
-    Key idea:
-      - start from base scenario's midnight bikes
-      - simulate the day
-      - dispatch trucks dynamically during the day
-      - capture timed TruckMove list
+    NEW behavior:
+      - Plan moves globally over the full day with a cost function
+      - Replay those timed moves inside the normal event-based simulator
+
+    This avoids the greedy "spend all moves immediately" behavior.
     """
 
     # ---- load base midnight bikes ----
     initial_bikes = load_initial_bikes_from_csv(base_scenario.state_csv)
 
-    # ---- simulate day WITH trucks ----
+    # ---- plan globally optimal moves ----
+    planned_moves = plan_truck_moves_for_day(
+        trips_csv_path=trips_csv,
+        day=day,
+        initial_bikes=initial_bikes,
+        bucket_minutes=base_scenario.bucket_minutes,
+        moves_budget=int(trucks_per_day),
+        truck_cap=20,
+    )
+
+    # ---- simulate day and replay planned moves ----
     truck_moves = build_station_state_by_hour(
         trips_csv_path=trips_csv,
         day=day,
@@ -35,7 +48,8 @@ def truck_scenario(
         initial_fill_ratio=None,
         initial_bikes=initial_bikes,
         bucket_minutes=base_scenario.bucket_minutes,
-        trucks_per_day=trucks_per_day,
+        trucks_per_day=0,              # IMPORTANT: no online dispatch
+        planned_moves=planned_moves,   # replay mode
     )
 
     return Scenario(
@@ -43,9 +57,10 @@ def truck_scenario(
         state_csv=Path(out_csv),
         bucket_minutes=base_scenario.bucket_minutes,
         meta={
-            "type": "trucks",
-            "trucks_per_day": trucks_per_day,
+            "type": "trucks_global_planner",
+            "trucks_per_day": int(trucks_per_day),
             "base": base_scenario.name,
-            "truck_moves": truck_moves,   # timed + ordered
+            "planned_moves": planned_moves,  # raw planner output
+            "truck_moves": truck_moves,      # what was actually applied (post-clamp)
         },
     )
