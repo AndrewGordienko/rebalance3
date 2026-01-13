@@ -1,5 +1,6 @@
 # rebalance3/scenarios/midnight.py
 from pathlib import Path
+
 from .base import Scenario
 from rebalance3.midnight.midnight_optimizer import optimize_midnight_from_trips
 from rebalance3.baseline.station_state_by_hour import build_station_state_by_hour
@@ -14,6 +15,19 @@ def midnight_scenario(
     total_bikes_ratio: float = 0.60,
     out_csv: str = "midnight_state.csv",
 ):
+    """
+    Build a scenario where only the midnight distribution is optimized,
+    then we simulate the day normally with rider trips (no trucks).
+
+    Args:
+      trips_csv: path to trips csv
+      visualization_day: YYYY-MM-DD day to simulate
+      days: optional list of days to optimize against (week-average midnight)
+      bucket_minutes: timestep used in simulation
+      total_bikes_ratio: ratio of total system capacity to keep as bikes
+      out_csv: output station_state csv
+    """
+
     result = optimize_midnight_from_trips(
         trips_csv_path=trips_csv,
         day=visualization_day if days is None else None,

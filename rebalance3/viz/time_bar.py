@@ -1,9 +1,24 @@
+# rebalance3/viz/time_bar.py
 import folium
 
 FULL_THRESHOLD = 0.9
 
 
-def build_time_bar(state, stations, valid_times, t_current, mode):
+def build_time_bar(state, stations, valid_times, t_current, mode, *, truck_moves=None):
+    """
+    Time bar:
+      - bars = number of "full" stations at each time bucket
+      - ticks = truck move times (vertical markers on top of bars)
+
+    IMPORTANT FIX:
+      - Clicking a bar now works in BOTH:
+          * iframe compare mode (postMessage)
+          * single-map mode (updates window.location + reload)
+    """
+
+    # ----------------------------
+    # Full-station bars
+    # ----------------------------
     full_counts = {}
 
     for t in valid_times:
@@ -18,7 +33,6 @@ def build_time_bar(state, stations, valid_times, t_current, mode):
                 cnt += 1
         full_counts[t] = cnt
 
-    # ---- SAFE NORMALIZATION ----
     max_count = max(full_counts.values(), default=0)
 
     bars = []
@@ -37,14 +51,47 @@ def build_time_bar(state, stations, valid_times, t_current, mode):
         bars.append(
             f"""
             <div class="timebar-item"
-                 onclick="parent.postMessage({{ type: 'set-time', value: {t} }}, '*')"
-                 data-label="{label}">
+                 onclick="setTime({t})"
+                 data-label="{label}"
+                 data-tmin="{t}">
               <div class="timebar-bar"
                    style="height:{height}px; opacity:{'1.0' if t == t_current else '0.55'};">
               </div>
             </div>
             """
         )
+
+    # ----------------------------
+    # Truck move ticks
+    # ----------------------------
+    move_counts = {}
+    if truck_moves:
+        for m in truck_moves:
+            if getattr(m, "t_min", None) is None:
+                continue
+            tm = int(m.t_min)
+            move_counts[tm] = move_counts.get(tm, 0) + 1
+
+    move_ticks_html = []
+    for t in valid_times:
+        c = move_counts.get(int(t), 0)
+        if c <= 0:
+            continue
+
+        tick_w = min(2 + 2 * (c - 1), 6)
+        op = 0.70 if c == 1 else (0.85 if c == 2 else 0.95)
+
+        move_ticks_html.append(
+            f"""
+            <div class="move-tick"
+                 title="{c} truck move{'s' if c != 1 else ''}"
+                 data-tmin="{t}"
+                 style="width:{tick_w}px; opacity:{op};">
+            </div>
+            """
+        )
+
+    key = "t" if mode == "t_min" else "hour"
 
     return folium.Element(
         f"""
@@ -83,6 +130,7 @@ def build_time_bar(state, stations, valid_times, t_current, mode):
   height: 84px;
   margin-right: 6px;
   cursor: pointer;
+  position: relative;
 }}
 
 .timebar-bar {{
@@ -102,18 +150,59 @@ def build_time_bar(state, stations, valid_times, t_current, mode):
   font-weight: 600;
   display: none;
 }}
+
+#move-ticks-layer {{
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: 14px;
+  height: 84px;
+  pointer-events: none;
+  z-index: 1250;
+}}
+
+.move-tick {{
+  position: absolute;
+  bottom: 0px;
+  height: 84px;
+  background: #111111;
+  border-radius: 2px;
+}}
 </style>
 
 <div id="timebar">
   <div id="timebar-label"></div>
+
   <div id="timebar-scroll"
        onmousemove="timebarMove(event)"
        onmouseleave="timebarHide()">
     {''.join(bars)}
   </div>
+
+  <div id="move-ticks-layer">
+    {''.join(move_ticks_html)}
+  </div>
 </div>
 
 <script>
+// ---------------------------------------------------------
+// FIX: clicking timebar works in iframe OR single-map mode
+// ---------------------------------------------------------
+function setTime(t) {{
+  try {{
+    if (window.parent && window.parent !== window) {{
+      // compare mode (iframe)
+      window.parent.postMessage({{ type: "set-time", value: t }}, "*");
+      return;
+    }}
+  }} catch (e) {{}}
+
+  // single-map mode (no iframe) => reload this page with updated query param
+  const url = new URL(window.location.href);
+  url.searchParams.set("{key}", String(t));
+  window.location.href = url.toString();
+}}
+
 function timebarMove(evt) {{
   const label = document.getElementById("timebar-label");
   const item = evt.target.closest(".timebar-item");
@@ -130,6 +219,47 @@ function timebarMove(evt) {{
 function timebarHide() {{
   document.getElementById("timebar-label").style.display = "none";
 }}
+
+function layoutMoveTicks() {{
+  const scroll = document.getElementById("timebar-scroll");
+  const layer = document.getElementById("move-ticks-layer");
+  if (!scroll || !layer) return;
+
+  const items = scroll.querySelectorAll(".timebar-item");
+  const itemByT = {{}};
+
+  items.forEach((it) => {{
+    const t = it.dataset.tmin;
+    if (t !== undefined) itemByT[t] = it;
+  }});
+
+  layer.querySelectorAll(".move-tick").forEach((tick) => {{
+    const t = tick.dataset.tmin;
+    const it = itemByT[t];
+    if (!it) return;
+
+    const r1 = scroll.getBoundingClientRect();
+    const r2 = it.getBoundingClientRect();
+
+    const centerX = (r2.left - r1.left) + (r2.width / 2);
+    tick.style.left = (centerX - (tick.offsetWidth / 2)) + "px";
+  }});
+}}
+
+document.addEventListener("DOMContentLoaded", () => {{
+  layoutMoveTicks();
+
+  const scroll = document.getElementById("timebar-scroll");
+  if (scroll) {{
+    scroll.addEventListener("scroll", () => {{
+      layoutMoveTicks();
+    }});
+  }}
+
+  window.addEventListener("resize", () => {{
+    layoutMoveTicks();
+  }});
+}});
 </script>
 """
     )

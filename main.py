@@ -1,50 +1,66 @@
 # rebalance3/main.py
 from rebalance3.scenarios.baseline import baseline_scenario
+from rebalance3.scenarios.midnight import midnight_scenario
 from rebalance3.scenarios.trucks import truck_scenario
+
 from rebalance3.viz.comparison import serve_comparison
+
 
 TRIPS = "Bike share ridership 2024-09.csv"
 DAY = "2024-09-01"
 
-# ---- baseline (no intervention) ----
-baseline = baseline_scenario(
-    TRIPS,
-    DAY,
-    initial_fill_ratio=0.60,
-    out_csv="baseline_state.csv",
-)
 
-# ---- baseline + trucks (global budget: trucks_per_day total moves/day) ----
-baseline_trucks = truck_scenario(
-    name="Baseline + trucks",
-    base_scenario=baseline,
-    trips_csv=TRIPS,
-    day=DAY,
-    trucks_per_day=10,  # <- TOTAL moves/day budget
-    out_csv="baseline_trucks_state.csv",
-)
-
-moves = baseline_trucks.meta["truck_moves"]
-
-print(f"\nTruck moves for {baseline_trucks.name}:\n")
-
-for i, m in enumerate(moves, 1):
-    dist = f"{m.distance_km:.2f}km" if getattr(m, "distance_km", None) is not None else "?"
-    tid = getattr(m, "truck_id", None)
-    tid_str = f"truck={tid}" if tid is not None else "truck=?"
-
-    print(
-        f"{i:02d}. "
-        f"t={m.t_min:4d} min | "
-        f"{m.from_station} → {m.to_station} "
-        f"({m.bikes} bikes) | {tid_str} | dist={dist}"
+def main():
+    # ---- baseline ----
+    baseline = baseline_scenario(
+        TRIPS,
+        DAY,
+        initial_fill_ratio=0.60,
+        out_csv="baseline_state.csv",
     )
 
-print("\nFirst few dispatch times (t_min):")
-print(sorted(set(m.t_min for m in moves if m.t_min is not None))[:10])
+    # ---- midnight optimizer ----
+    midnight = midnight_scenario(
+        TRIPS,
+        DAY,  # visualization_day
+        bucket_minutes=baseline.bucket_minutes,
+        total_bikes_ratio=0.60,
+        out_csv="midnight_state.csv",
+    )
 
-serve_comparison(
-    scenarios=[baseline, baseline_trucks],
-    port=8080,
-    graphs=True,
-)
+    # ---- trucks (10 total moves/day) ----
+    trucks = truck_scenario(
+        name="Truck Rebalancing",
+        base_scenario=midnight,
+        trips_csv=TRIPS,
+        day=DAY,
+        trucks_per_day=10,
+        out_csv="truck_state.csv",
+    )
+
+    # ---- print moves ----
+    moves = trucks.meta.get("truck_moves", [])
+
+    print(f"\nTruck moves for {trucks.name}:\n")
+    for i, m in enumerate(moves, 1):
+        print(
+            f"{i:02d}. "
+            f"t={m.t_min:4d} min | "
+            f"{m.from_station} → {m.to_station} "
+            f"({m.bikes} bikes)"
+        )
+
+    print("\nMove times (t_min):")
+    print(sorted(set(m.t_min for m in moves if m.t_min is not None)))
+
+    # ---- UI ----
+    serve_comparison(
+        scenarios=[baseline, midnight, trucks],
+        port=8080,
+        graphs=True,
+        title="Bike Share Rebalancing Viewer",
+    )
+
+
+if __name__ == "__main__":
+    main()

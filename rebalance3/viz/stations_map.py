@@ -1,7 +1,6 @@
+# rebalance3/viz/stations_map.py
 import folium
 from folium import PolyLine
-
-from rebalance3.trucks.types import TruckMove
 
 CENTER_LAT = 43.6532
 CENTER_LON = -79.3832
@@ -62,10 +61,7 @@ def add_truck_moves(m, stations, truck_moves, t_cur):
     if not truck_moves:
         return
 
-    station_pos = {
-        str(s["station_id"]): (s["lat"], s["lon"])
-        for s in stations
-    }
+    station_pos = {str(s["station_id"]): (s["lat"], s["lon"]) for s in stations}
 
     for move in truck_moves:
         if move.t_min != t_cur:
@@ -76,7 +72,6 @@ def add_truck_moves(m, stations, truck_moves, t_cur):
         if not src or not dst:
             continue
 
-        # ---- movement line ----
         PolyLine(
             locations=[src, dst],
             color="#000000",
@@ -89,7 +84,6 @@ def add_truck_moves(m, stations, truck_moves, t_cur):
             ),
         ).add_to(m)
 
-        # ---- pickup ring (RED) ----
         folium.CircleMarker(
             location=src,
             radius=10,
@@ -99,7 +93,6 @@ def add_truck_moves(m, stations, truck_moves, t_cur):
             tooltip=f"Pickup: {move.from_station}",
         ).add_to(m)
 
-        # ---- dropoff ring (GREEN) ----
         folium.CircleMarker(
             location=dst,
             radius=10,
@@ -127,7 +120,7 @@ def _build_map_document(
         location=[CENTER_LAT, CENTER_LON],
         zoom_start=12,
         tiles="cartodbpositron",
-        prefer_canvas=False,   # IMPORTANT: prevents disappearing on zoom
+        prefer_canvas=False,
     )
 
     add_station_markers(m, stations, state, t_cur, mode)
@@ -137,11 +130,21 @@ def _build_map_document(
 
     if valid_times:
         from rebalance3.viz.time_bar import build_time_bar
+
         m.get_root().html.add_child(
-            build_time_bar(state, stations, valid_times, t_cur, mode)
+            build_time_bar(
+                state,
+                stations,
+                valid_times,
+                t_cur,
+                mode,
+                truck_moves=truck_moves,
+            )
         )
 
-    m.get_root().html.add_child(folium.Element(f"""
+    m.get_root().html.add_child(
+        folium.Element(
+            f"""
 <style>
 #map-wrap {{
   position: relative;
@@ -208,6 +211,8 @@ document.addEventListener("DOMContentLoaded", () => {{
   if (timebar) wrap.appendChild(timebar);
 }});
 </script>
-"""))
+"""
+        )
+    )
 
     return m.get_root().render()

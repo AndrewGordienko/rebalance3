@@ -1,3 +1,4 @@
+# rebalance3/viz/comparison.py
 from flask import Flask, request
 from pathlib import Path
 
@@ -16,7 +17,7 @@ def serve_comparison(
     port=8080,
     stations_file=DEFAULT_TORONTO_STATIONS_FILE,
     graphs=True,
-    title="Bike Share Rebalancing — Scenario Comparison",
+    title="Bike Share Rebalancing — Viewer",
 ):
     stations = load_stations(stations_file)
 
@@ -32,6 +33,8 @@ def serve_comparison(
 
     app = Flask(__name__)
 
+    scenario_names = [s.name for s in scenarios]
+
     def _resolve_time():
         if not valid_times:
             return 0
@@ -39,20 +42,69 @@ def serve_comparison(
         t_req = request.args.get(key, valid_times[0], type=int)
         return snap_time(t_req, valid_times)
 
+    def _time_qp(t_cur: int) -> str:
+        return f"t={t_cur}" if mode == "t_min" else f"hour={t_cur}"
+
     @app.route("/")
     def _index():
         t_cur = _resolve_time()
-        qp = f"t={t_cur}" if mode == "t_min" else f"hour={t_cur}"
+
+        # which scenario to show in single-map mode
+        s_idx = request.args.get("s", 0, type=int)
+        if s_idx < 0 or s_idx >= len(scenarios):
+            s_idx = 0
+
+        compare = request.args.get("compare", 0, type=int)
+        compare = 1 if compare else 0
+
+        # compare selection
+        a_idx = request.args.get("a", 0, type=int)
+        b_idx = request.args.get("b", 1, type=int)
+
+        if a_idx < 0 or a_idx >= len(scenarios):
+            a_idx = 0
+        if b_idx < 0 or b_idx >= len(scenarios):
+            b_idx = min(1, len(scenarios) - 1)
+
+        qp_time = _time_qp(t_cur)
+
+        # single map URL
+        single_url = f"/map/{s_idx}?{qp_time}"
+
+        # compare URLs
+        map_a_url = f"/map/{a_idx}?{qp_time}"
+        map_b_url = f"/map/{b_idx}?{qp_time}"
 
         graphs_html = ""
-        if graphs and len(scenarios) >= 2:
+        if graphs and compare and len(scenarios) >= 2:
             graphs_html = build_comparison_graphs(
-                states=[scenario_states[0], scenario_states[1]],
+                states=[scenario_states[a_idx], scenario_states[b_idx]],
                 stations=stations,
                 valid_times=valid_times,
                 mode=mode,
-                scenario_names=[scenarios[0].name, scenarios[1].name],
+                scenario_names=[scenarios[a_idx].name, scenarios[b_idx].name],
             ).render()
+
+        # build dropdown options
+        scenario_opts = "\n".join(
+            [
+                f'<option value="{i}" {"selected" if i == s_idx else ""}>{scenarios[i].name}</option>'
+                for i in range(len(scenarios))
+            ]
+        )
+
+        a_opts = "\n".join(
+            [
+                f'<option value="{i}" {"selected" if i == a_idx else ""}>{scenarios[i].name}</option>'
+                for i in range(len(scenarios))
+            ]
+        )
+        b_opts = "\n".join(
+            [
+                f'<option value="{i}" {"selected" if i == b_idx else ""}>{scenarios[i].name}</option>'
+                for i in range(len(scenarios))
+            ]
+        )
 
         return f"""
 <!DOCTYPE html>
@@ -69,25 +121,72 @@ html, body {{
   background: white;
 }}
 
-#page-title {{
+#topbar {{
   max-width: 1800px;
-  margin: 16px auto 4px auto;
+  margin: 16px auto 10px auto;
   padding: 0 24px;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
 }}
 
-#page-title h1 {{
-  font-size: 22px;
-  font-weight: 700;
+#topbar-left {{
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}}
+
+#topbar h1 {{
+  font-size: 18px;
+  font-weight: 800;
   margin: 0;
 }}
 
+#controls {{
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}}
+
+.ctrl {{
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: #f6f6f6;
+  border: 1px solid #e6e6e6;
+  border-radius: 10px;
+  padding: 8px 10px;
+  font-size: 13px;
+}}
+
+select {{
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  padding: 6px 8px;
+  font-size: 13px;
+  background: white;
+}}
+
+label {{
+  user-select: none;
+}}
+
 #maps {{
+  max-width: 1800px;
+  margin: 0 auto;
+  padding: 0 24px 18px 24px;
+}}
+
+#single-map {{
+  width: 100%;
+}}
+
+#compare-maps {{
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 24px;
-  padding: 16px 24px 0 24px;
-  max-width: 1800px;
-  margin: 0 auto;
 }}
 
 .map-frame {{
@@ -98,19 +197,24 @@ html, body {{
   background: transparent;
 }}
 
-#graphs-root {{
-  margin-top: 0 !important;
-  padding-top: 0 !important;
-}}
-
 @media (max-width: 1100px) {{
-  #maps {{
+  #compare-maps {{
     grid-template-columns: 1fr;
   }}
+}}
+
+#graphs-root {{
+  max-width: 1800px;
+  margin: 0 auto;
+  padding: 0 24px 24px 24px;
 }}
 </style>
 
 <script>
+// ---------------------------------------------------------
+// When a map timebar in an iframe sends set-time,
+// update iframe URLs to the same time.
+// ---------------------------------------------------------
 window.addEventListener("message", (e) => {{
   if (!e.data || e.data.type !== "set-time") return;
 
@@ -123,21 +227,80 @@ window.addEventListener("message", (e) => {{
     iframe.src = url.toString();
   }});
 }});
+
+function applyControls() {{
+  const compare = document.getElementById("compare-toggle").checked ? 1 : 0;
+
+  const url = new URL(window.location.href);
+  url.searchParams.set("compare", String(compare));
+
+  if (!compare) {{
+    const s = document.getElementById("scenario-single").value;
+    url.searchParams.set("s", s);
+  }} else {{
+    const a = document.getElementById("scenario-a").value;
+    const b = document.getElementById("scenario-b").value;
+    url.searchParams.set("a", a);
+    url.searchParams.set("b", b);
+  }}
+
+  window.location.href = url.toString();
+}}
 </script>
 </head>
 
 <body>
 
-<div id="page-title">
-  <h1>{title}</h1>
+<div id="topbar">
+  <div id="topbar-left">
+    <h1>{title}</h1>
+
+    <div id="controls">
+
+      <div class="ctrl">
+        <label>
+          <input id="compare-toggle" type="checkbox" onchange="applyControls()" {"checked" if compare else ""}/>
+          Compare
+        </label>
+      </div>
+
+      <div class="ctrl" id="single-controls" style="display:{'none' if compare else 'inline-flex'};">
+        <span>Scenario</span>
+        <select id="scenario-single" onchange="applyControls()">
+          {scenario_opts}
+        </select>
+      </div>
+
+      <div class="ctrl" id="compare-controls" style="display:{'inline-flex' if compare else 'none'};">
+        <span>A</span>
+        <select id="scenario-a" onchange="applyControls()">
+          {a_opts}
+        </select>
+
+        <span style="margin-left:8px;">B</span>
+        <select id="scenario-b" onchange="applyControls()">
+          {b_opts}
+        </select>
+      </div>
+
+    </div>
+  </div>
 </div>
 
 <div id="maps">
-  <iframe class="map-frame" src="/map/0?{qp}"></iframe>
-  <iframe class="map-frame" src="/map/1?{qp}"></iframe>
+
+  <div id="single-map" style="display:{'none' if compare else 'block'};">
+    <iframe class="map-frame" src="{single_url}"></iframe>
+  </div>
+
+  <div id="compare-maps" style="display:{'grid' if compare else 'none'};">
+    <iframe class="map-frame" src="{map_a_url}"></iframe>
+    <iframe class="map-frame" src="{map_b_url}"></iframe>
+  </div>
+
 </div>
 
-<div id="graphs-root">
+<div id="graphs-root" style="display:{'block' if (compare and graphs_html) else 'none'};">
   {graphs_html}
 </div>
 
@@ -160,7 +323,7 @@ window.addEventListener("message", (e) => {{
             valid_times=valid_times,
             t_cur=t_cur,
             title=scenario.name,
-            truck_moves=scenario.meta.get("truck_moves"),  # 🔑 FIX
+            truck_moves=scenario.meta.get("truck_moves"),
         )
 
     app.run(host=host, port=port)
