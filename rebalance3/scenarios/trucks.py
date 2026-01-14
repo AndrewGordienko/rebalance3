@@ -4,7 +4,6 @@ from pathlib import Path
 from .base import Scenario
 from rebalance3.baseline.station_state_by_hour import build_station_state_by_hour
 from rebalance3.util.load_bikes import load_initial_bikes_from_csv
-
 from rebalance3.trucks.day_planner import plan_truck_moves_for_day
 
 
@@ -14,20 +13,40 @@ def truck_scenario(
     base_scenario: Scenario,
     trips_csv: str,
     day: str,
-    trucks_per_day: int,
     out_csv: str,
+    # -------------------------------------------------
+    # YOUR RULE
+    # -------------------------------------------------
+    n_trucks: int = 10,
+    moves_per_truck_total: int = 5,  # total per day per truck
+    # -------------------------------------------------
+    # service window (planner only)
+    # -------------------------------------------------
+    service_start_hour: int = 8,
+    service_end_hour: int = 20,
+    # optional override
+    total_moves_per_day: int | None = None,
 ):
     """
-    Apply truck rebalancing on top of an existing scenario.
+    Truck scenario rule:
 
-    NEW behavior:
-      - Plan moves globally over the full day with a cost function
-      - Replay those timed moves inside the normal event-based simulator
+      - trucks are NOT fresh every hour
+      - each truck is used at most once per day
+      - each truck can do up to K moves TOTAL for the day
 
-    This avoids the greedy "spend all moves immediately" behavior.
+    So total daily capacity is:
+        moves_budget = n_trucks * moves_per_truck_total
     """
 
-    # ---- load base midnight bikes ----
+    n_trucks = max(0, int(n_trucks))
+    moves_per_truck_total = max(0, int(moves_per_truck_total))
+
+    if total_moves_per_day is None:
+        moves_budget = n_trucks * moves_per_truck_total
+    else:
+        moves_budget = max(0, int(total_moves_per_day))
+
+    # ---- base midnight distribution ----
     initial_bikes = load_initial_bikes_from_csv(base_scenario.state_csv)
 
     # ---- plan globally optimal moves ----
@@ -36,11 +55,16 @@ def truck_scenario(
         day=day,
         initial_bikes=initial_bikes,
         bucket_minutes=base_scenario.bucket_minutes,
-        moves_budget=int(trucks_per_day),
+        moves_budget=int(moves_budget),
         truck_cap=20,
+        service_start_hour=int(service_start_hour),
+        service_end_hour=int(service_end_hour),
     )
 
     # ---- simulate day and replay planned moves ----
+    #
+    # NOTE:
+    # your current build_station_state_by_hour() signature does NOT accept trucks_per_day anymore
     truck_moves = build_station_state_by_hour(
         trips_csv_path=trips_csv,
         day=day,
@@ -48,8 +72,7 @@ def truck_scenario(
         initial_fill_ratio=None,
         initial_bikes=initial_bikes,
         bucket_minutes=base_scenario.bucket_minutes,
-        trucks_per_day=0,              # IMPORTANT: no online dispatch
-        planned_moves=planned_moves,   # replay mode
+        planned_moves=planned_moves,
     )
 
     return Scenario(
@@ -58,9 +81,13 @@ def truck_scenario(
         bucket_minutes=base_scenario.bucket_minutes,
         meta={
             "type": "trucks_global_planner",
-            "trucks_per_day": int(trucks_per_day),
             "base": base_scenario.name,
-            "planned_moves": planned_moves,  # raw planner output
-            "truck_moves": truck_moves,      # what was actually applied (post-clamp)
+            "n_trucks": int(n_trucks),
+            "moves_per_truck_total": int(moves_per_truck_total),
+            "moves_budget": int(moves_budget),
+            "service_start_hour": int(service_start_hour),
+            "service_end_hour": int(service_end_hour),
+            "planned_moves": planned_moves,
+            "truck_moves": truck_moves,
         },
     )

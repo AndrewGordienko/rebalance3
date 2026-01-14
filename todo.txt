@@ -13,12 +13,17 @@ city heat map
 
 sentiment analysis of news
 
-----
 
-sunday
+--
 
-why are the bikes stop moving at 210 minutes
-performance seems bad
-draw the circles - show where the bikes are going
-custom simulator for bike moving
-need docs
+i want to have trucks do more than one route done
+truck pathfinding
+    traffic
+
+bike algorithm takes a week worth of data and avgs
+
+fix up main.py ux
+
+feel like the algo can do a better job at reducing empty/full
+also compare when we let trucks just go once or five times per hour
+also some sort of quantity way to compare the graphs not just eyeballing them

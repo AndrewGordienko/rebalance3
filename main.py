@@ -34,8 +34,11 @@ def main():
         base_scenario=midnight,
         trips_csv=TRIPS,
         day=DAY,
-        trucks_per_day=10,
         out_csv="truck_state.csv",
+        n_trucks=10,
+        moves_per_truck_total=5,  # ✅ total cap = 50
+        service_start_hour=8,
+        service_end_hour=20,
     )
 
     # ---- print moves ----

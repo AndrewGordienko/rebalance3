@@ -18,17 +18,8 @@ Notes / design:
   for the two affected stations (src, snk) from b0 onward.
 - No pacing hacks, no hard caps by hour. If evening moves help more, it will pick them.
 
-Typical usage (in your scenario wrapper):
-  moves = plan_truck_moves_for_day(
-      trips_csv_path=TRIPS,
-      day=DAY,
-      initial_bikes=initial_bikes,
-      bucket_minutes=15,
-      moves_budget=10,
-  )
-
-Then, to produce a "state CSV with trucks", replay those moves inside your
-event-based simulator (apply them at their t_min buckets).
+NEW:
+- Restrict moves to a service window (default 08:00–20:00).
 """
 
 from __future__ import annotations
@@ -39,7 +30,7 @@ import math
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Tuple, Iterable
+from typing import Dict, List, Tuple
 
 from rebalance3.trucks.types import TruckMove
 
@@ -308,14 +299,20 @@ def plan_truck_moves_for_day(
     full_thr: float = 0.90,
     w_empty: float = 1.0,
     w_full: float = 1.0,
-    candidate_time_top_k: int = 24,
-    top_k_sources: int = 25,
-    top_k_sinks: int = 25,
+    candidate_time_top_k: int = 8,
+    top_k_sources: int = 10,
+    top_k_sinks: int = 10,
     stations_file: str | Path = DEFAULT_TORONTO_STATIONS_FILE,
     encoding: str = "utf-8-sig",
+    service_start_hour: int = 8,
+    service_end_hour: int = 20,  # exclusive
 ) -> List[TruckMove]:
     """
     Returns a list of TruckMove with chosen t_min over the day.
+
+    NEW:
+      Restricts chosen move times to [service_start_hour, service_end_hour).
+      Example default: 8 → 20 means 08:00–19:59.
     """
     moves_budget = int(moves_budget)
     if moves_budget <= 0:
@@ -335,7 +332,29 @@ def plan_truck_moves_for_day(
     )
 
     B = trips.bucket_count
+    if B <= 0:
+        return []
+
     lookahead_b = max(1, int(lookahead_minutes // bucket_minutes))
+
+    # ---- service window bucket range ----
+    service_start_hour = int(service_start_hour)
+    service_end_hour = int(service_end_hour)
+
+    if not (0 <= service_start_hour <= 24 and 0 <= service_end_hour <= 24):
+        raise ValueError("service_start_hour/service_end_hour must be within [0, 24]")
+
+    if service_end_hour <= service_start_hour:
+        raise ValueError("service_end_hour must be > service_start_hour")
+
+    service_start_min = service_start_hour * 60
+    service_end_min = service_end_hour * 60
+
+    b_start = max(0, service_start_min // bucket_minutes)
+    b_end = min(B, service_end_min // bucket_minutes)  # exclusive
+
+    if b_start >= b_end:
+        return []
 
     # clamp initial bikes
     x0: Dict[str, int] = {}
@@ -346,14 +365,18 @@ def plan_truck_moves_for_day(
     # baseline series for all stations (bikes at start of each bucket)
     series: Dict[str, List[int]] = {}
     for sid in sids:
-        series[sid] = _simulate_series(x0=x0[sid], cap=cap[sid], delta=trips.delta_by_station[sid])
+        series[sid] = _simulate_series(
+            x0=x0[sid],
+            cap=cap[sid],
+            delta=trips.delta_by_station[sid],
+        )
 
     # baseline total cost per station (from bucket 0)
     cost_station: Dict[str, float] = {}
     for sid in sids:
         cost_station[sid] = _cost_from_bucket(
             start_b=0,
-            x_start=series[sid][0] if B > 0 else x0[sid],
+            x_start=series[sid][0],
             cap=cap[sid],
             delta=trips.delta_by_station[sid],
             empty_thr=empty_thr,
@@ -365,13 +388,12 @@ def plan_truck_moves_for_day(
     def total_cost() -> float:
         return float(sum(cost_station.values()))
 
-    # pick candidate times: data-driven, where the system is "most bad"
-    # badness(b) = total empty-depth + full-depth across stations at bucket b
+    # pick candidate times within service window only
     empty_levels = {sid: empty_thr * cap[sid] for sid in sids}
     full_levels = {sid: full_thr * cap[sid] for sid in sids}
 
     badness: List[Tuple[float, int]] = []
-    for b in range(B):
+    for b in range(b_start, b_end):
         s = 0.0
         for sid in sids:
             x = series[sid][b]
@@ -386,15 +408,15 @@ def plan_truck_moves_for_day(
     badness.sort(reverse=True)
     candidate_buckets = sorted(set(b for _, b in badness[: max(8, candidate_time_top_k)]))
 
-    # also add a coarse grid so we don't miss good times if badness is noisy
+    # also add a coarse grid within the service window
     step = max(1, int((60 // bucket_minutes)))  # ~hourly
-    for b in range(0, B, step):
+    for b in range(b_start, b_end, step):
         candidate_buckets.append(b)
-    candidate_buckets = sorted(set(candidate_buckets))
+
+    candidate_buckets = sorted(set(b for b in candidate_buckets if b_start <= b < b_end))
 
     planned: List[TruckMove] = []
 
-    # Greedy K-step planning (global cost drop)
     for _ in range(moves_budget):
         best_improvement = 0.0
         best_choice = None  # (b0, src, snk, moved)
@@ -402,7 +424,6 @@ def plan_truck_moves_for_day(
         current_total_cost = total_cost()
 
         for b0 in candidate_buckets:
-            # choose top sinks/sources at this time (risk-based, data-driven)
             sinks = sorted(
                 sids,
                 key=lambda sid: _sink_risk(
@@ -458,8 +479,6 @@ def plan_truck_moves_for_day(
                     if moved <= 0:
                         continue
 
-                    # compute local cost change (only src + snk from b0 onward)
-                    # baseline local cost from b0:
                     base_src = _cost_from_bucket(
                         start_b=b0,
                         x_start=series[src][b0],
@@ -481,7 +500,6 @@ def plan_truck_moves_for_day(
                         w_full=w_full,
                     )
 
-                    # after applying move at start of b0
                     new_src = _cost_from_bucket(
                         start_b=b0,
                         x_start=series[src][b0] - moved,
@@ -511,14 +529,9 @@ def plan_truck_moves_for_day(
         if best_choice is None or best_improvement <= 1e-9:
             break
 
-        # Commit best move: update trajectories + cached costs for src/snk
         b0, src, snk, moved = best_choice
 
-        # Update series for src and snk from b0 onward by re-simulating only those two
-        # Need the bikes-at-start-of-b0 after all previous moves: that's current series[src][b0], etc.
-        # Apply move at start of b0, then re-sim forward.
         def resim_from_b0(sid: str, new_x_b0: int):
-            # rebuild bikes-at-start series from b0 onward, keeping prefix unchanged
             prefix = series[sid][:b0]
             tail = _simulate_series(
                 x0=new_x_b0,
@@ -527,10 +540,9 @@ def plan_truck_moves_for_day(
             )
             series[sid] = prefix + tail
 
-            # refresh full-day cost cache for that station (cheap: 96 buckets)
             cost_station[sid] = _cost_from_bucket(
                 start_b=0,
-                x_start=series[sid][0] if B > 0 else new_x_b0,
+                x_start=series[sid][0],
                 cap=cap[sid],
                 delta=trips.delta_by_station[sid],
                 empty_thr=empty_thr,
@@ -551,11 +563,7 @@ def plan_truck_moves_for_day(
             )
         )
 
-        # (Optional) if you want to keep candidate_buckets adaptive, you can recompute badness here.
-        # For now, keep fixed set for speed.
+        _ = current_total_cost
 
-        _ = current_total_cost  # silence linters
-
-    # Sort by time (nice for replay)
     planned.sort(key=lambda m: (m.t_min if m.t_min is not None else 0))
     return planned
