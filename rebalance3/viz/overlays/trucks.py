@@ -1,4 +1,6 @@
-# rebalance3/viz/overlays/trucks.py
+# rebalance3/viz/maps/overlays/trucks.py
+from __future__ import annotations
+
 import folium
 from folium import PolyLine
 
@@ -12,74 +14,74 @@ def _mv_get(m, key, default=None):
     return getattr(m, key, default)
 
 
-def _as_int(x, default=None):
-    try:
-        return int(x)
-    except Exception:
-        return default
-
-
-def add_truck_moves(
-    m,
+def add_truck_moves_overlay(
+    m: folium.Map,
+    *,
     stations,
     truck_moves,
-    *,
     mode: str,
     t_cur: int,
     bucket_minutes: int = 15,
-    show_bucket_window: bool = True,
 ):
     """
-    Draw truck moves for the current displayed time.
-
-    Time matching:
-      - mode == "hour":
-          show moves where (t_min // 60) == t_cur
-      - mode == "t_min":
-          if show_bucket_window:
-              show moves where t_cur <= t_min < t_cur + bucket_minutes
-          else:
-              show moves where t_min == t_cur
+    Draw truck moves on the map for the currently displayed time.
 
     Visual encoding:
-      - black line between stations
-      - red ring on pickup
-      - green ring on dropoff
-    """
+      - BLACK line: movement
+      - RED ring: pickup station
+      - GREEN ring: dropoff station
 
+    Time alignment rules:
+      - mode == "t_min":
+          show moves where t_min is inside [t_cur, t_cur + bucket_minutes)
+          (because your state snapshots are bucketed)
+      - mode == "hour":
+          show moves where (t_min // 60) == t_cur
+    """
     if not truck_moves:
         return
 
-    station_pos = {
-        str(s["station_id"]): (float(s["lat"]), float(s["lon"]))
-        for s in stations
-    }
+    # station_id -> (lat, lon)
+    station_pos = {}
+    for s in stations:
+        sid = str(s.get("station_id"))
+        if not sid:
+            continue
+        try:
+            station_pos[sid] = (float(s["lat"]), float(s["lon"]))
+        except Exception:
+            continue
 
-    t_cur_i = _as_int(t_cur, 0)
-    t0 = t_cur_i
-    t1 = t_cur_i + int(bucket_minutes)
+    # --- decide the active time window ---
+    t_cur = int(t_cur)
+    bucket_minutes = int(bucket_minutes)
+
+    if mode == "hour":
+        # whole hour
+        t0 = t_cur * 60
+        t1 = (t_cur + 1) * 60
+    else:
+        # snapshot bucket window
+        t0 = t_cur
+        t1 = t_cur + bucket_minutes
 
     for move in truck_moves:
-        tm = _as_int(_mv_get(move, "t_min", None), None)
+        tm = _mv_get(move, "t_min", None)
         if tm is None:
             continue
 
-        # ---- time filter ----
-        if mode == "hour":
-            if (tm // 60) != int(t_cur_i):
-                continue
-        else:
-            # mode == "t_min"
-            if show_bucket_window:
-                if not (t0 <= tm < t1):
-                    continue
-            else:
-                if tm != int(t_cur_i):
-                    continue
+        try:
+            tm = int(tm)
+        except Exception:
+            continue
+
+        # filter to the active window
+        if not (t0 <= tm < t1):
+            continue
 
         src_id = _mv_get(move, "from_station", None)
         dst_id = _mv_get(move, "to_station", None)
-        bikes = _as_int(_mv_get(move, "bikes", 0), 0)
+        bikes = _mv_get(move, "bikes", 0)
 
         if src_id is None or dst_id is None:
             continue
@@ -87,41 +89,54 @@ def add_truck_moves(
         src_id = str(src_id)
         dst_id = str(dst_id)
 
+        try:
+            bikes = int(bikes)
+        except Exception:
+            bikes = 0
+
         src = station_pos.get(src_id)
         dst = station_pos.get(dst_id)
         if not src or not dst:
             continue
 
-        # ---- movement line ----
+        # --------------------------
+        # 1) Movement line (BLACK)
+        # --------------------------
         PolyLine(
             locations=[src, dst],
-            color="#000000",
-            weight=4,
+            color="#111111",
+            weight=5,
             opacity=0.95,
             tooltip=(
-                f"Truck move<br>"
+                f"<b>Truck move</b><br>"
                 f"{src_id} → {dst_id}<br>"
                 f"{bikes} bikes<br>"
                 f"t={tm} min"
             ),
         ).add_to(m)
 
-        # ---- pickup ring (RED) ----
+        # --------------------------
+        # 2) Pickup ring (RED)
+        # --------------------------
         folium.CircleMarker(
             location=src,
-            radius=10,
+            radius=11,
             color="#d73027",
-            weight=3,
+            weight=4,
             fill=False,
-            tooltip=f"Pickup: {src_id}",
+            opacity=1.0,
+            tooltip=f"Pickup: {src_id} ({bikes} bikes)",
         ).add_to(m)
 
-        # ---- dropoff ring (GREEN) ----
+        # --------------------------
+        # 3) Dropoff ring (GREEN)
+        # --------------------------
         folium.CircleMarker(
             location=dst,
-            radius=10,
+            radius=11,
             color="#1a9850",
-            weight=3,
+            weight=4,
             fill=False,
-            tooltip=f"Dropoff: {dst_id}",
+            opacity=1.0,
+            tooltip=f"Dropoff: {dst_id} ({bikes} bikes)",
         ).add_to(m)

@@ -2,9 +2,9 @@
 import folium
 
 from rebalance3.viz.overlays.stations import add_station_markers
-from rebalance3.viz.overlays.trucks import add_truck_moves
+from rebalance3.viz.overlays.trucks import add_truck_moves_overlay
 from rebalance3.viz.widgets.legend import build_legend_widget
-from rebalance3.viz.widgets.time_bar import build_time_bar  # your existing file moved later if you want
+from rebalance3.viz.widgets.time_bar import build_time_bar
 
 CENTER_LAT = 43.6532
 CENTER_LON = -79.3832
@@ -32,22 +32,27 @@ def render_map_document(
         prefer_canvas=False,
     )
 
-    # stations
+    # ----------------------------
+    # Stations
+    # ----------------------------
     add_station_markers(m, stations, state, t_cur, mode)
 
-    # trucks (overlay)
+    # ----------------------------
+    # Truck overlay (pickup + dropoff rings + line)
+    # ----------------------------
     if truck_moves:
-        add_truck_moves(
+        add_truck_moves_overlay(
             m,
-            stations,
-            truck_moves,
+            stations=stations,
+            truck_moves=truck_moves,
             mode=mode,
             t_cur=t_cur,
             bucket_minutes=bucket_minutes,
-            show_bucket_window=True,   # key: makes 435 show moves at 420 etc
         )
 
-    # timebar (widget)
+    # ----------------------------
+    # Timebar (widget)
+    # ----------------------------
     if valid_times:
         m.get_root().html.add_child(
             build_time_bar(
@@ -60,10 +65,14 @@ def render_map_document(
             )
         )
 
-    # legend (widget)
+    # ----------------------------
+    # Legend (widget)
+    # ----------------------------
     m.get_root().html.add_child(build_legend_widget(include_trucks=bool(truck_moves)))
 
-    # title + wrap so widgets sit on-map
+    # ----------------------------
+    # Title + wrap so widgets sit on-map
+    # ----------------------------
     m.get_root().html.add_child(
         folium.Element(
             f"""
