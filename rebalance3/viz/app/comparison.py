@@ -6,7 +6,11 @@ from rebalance3.util.stations import load_stations
 from rebalance3.viz.data.state_loader import load_station_state
 from rebalance3.viz.data.time_snap import snap_time
 from rebalance3.viz.maps.render import render_map_document
-from rebalance3.viz.charts.graphs import build_comparison_graphs
+
+from rebalance3.viz.charts.graphs import (
+    build_comparison_graphs,
+    build_single_graphs,
+)
 
 _LIB_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_TORONTO_STATIONS_FILE = _LIB_ROOT / "station_information.json"
@@ -91,15 +95,29 @@ def serve_comparison(
         map_a_url = f"/map/{a_idx}?{qp_time}"
         map_b_url = f"/map/{b_idx}?{qp_time}"
 
+        # ---------------------------------------------------------
+        # ✅ Graphs:
+        #   - Compare mode: show A vs B (4 charts)
+        #   - Single mode: show selected scenario only (2 charts)
+        # ---------------------------------------------------------
         graphs_html = ""
-        if graphs and compare and len(scenarios) >= 2:
-            graphs_html = build_comparison_graphs(
-                states=[scenario_states[a_idx], scenario_states[b_idx]],
-                stations=stations,
-                valid_times=valid_times,
-                mode=mode,
-                scenario_names=[scenarios[a_idx].name, scenarios[b_idx].name],
-            ).render()
+        if graphs:
+            if compare and len(scenarios) >= 2:
+                graphs_html = build_comparison_graphs(
+                    states=[scenario_states[a_idx], scenario_states[b_idx]],
+                    stations=stations,
+                    valid_times=valid_times,
+                    mode=mode,
+                    scenario_names=[scenarios[a_idx].name, scenarios[b_idx].name],
+                ).render()
+            else:
+                graphs_html = build_single_graphs(
+                    state=scenario_states[s_idx],
+                    stations=stations,
+                    valid_times=valid_times,
+                    mode=mode,
+                    scenario_name=scenarios[s_idx].name,
+                ).render()
 
         # build dropdown options
         scenario_opts = "\n".join(
@@ -317,7 +335,7 @@ function applyControls() {{
 
 </div>
 
-<div id="graphs-root" style="display:{'block' if (compare and graphs_html) else 'none'};">
+<div id="graphs-root" style="display:{'block' if graphs_html else 'none'};">
   {graphs_html}
 </div>
 
