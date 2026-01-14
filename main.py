@@ -80,6 +80,7 @@ def main():
         port=8080,
         graphs=True,
         title="Bike Share Rebalancing Viewer",
+        layout="grid4",  # ✅ start in 4-map + 8-graph dashboard mode
     )
 
 

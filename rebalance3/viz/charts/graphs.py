@@ -32,7 +32,6 @@ def _labels(valid_times, mode):
 
 
 def _auc(series):
-    # Discrete "area under curve" = sum of counts per time bucket
     return int(sum(int(x) for x in series))
 
 
@@ -41,25 +40,18 @@ def _peak(series):
 
 
 def _pct_change(baseline, candidate):
-    # negative means improvement (lower is better)
     if baseline <= 0:
         return 0.0
     return 100.0 * (candidate - baseline) / baseline
 
 
 def _pct_reduction(baseline, candidate):
-    # positive means improvement (lower is better)
     if baseline <= 0:
         return 0.0
     return 100.0 * (baseline - candidate) / baseline
 
 
 def build_single_graphs(state, stations, valid_times, mode, scenario_name: str):
-    """
-    ✅ Single-scenario graphs:
-    - one summary block
-    - one set of charts (Empty + Full)
-    """
     return build_comparison_graphs(
         states=[state, state],
         stations=stations,
@@ -70,17 +62,8 @@ def build_single_graphs(state, stations, valid_times, mode, scenario_name: str):
 
 
 def build_comparison_graphs(states, stations, valid_times, mode, scenario_names):
-    """
-    Compare-mode:
-      scenario_names=[A, B]
-
-    Single-mode:
-      scenario_names=[A, ""]
-      (only renders one set of charts + one summary)
-    """
     labels = _labels(valid_times, mode)
 
-    # counts for A and B
     a_empty, a_full = _counts(states[0], stations, valid_times)
     b_empty, b_full = _counts(states[1], stations, valid_times)
 
@@ -91,7 +74,6 @@ def build_comparison_graphs(states, stations, valid_times, mode, scenario_names)
 
     compare_mode = bool(name_b)
 
-    # summary stats
     a_empty_auc = _auc(a_empty)
     a_full_auc = _auc(a_full)
     a_empty_peak = _peak(a_empty)
@@ -108,7 +90,6 @@ def build_comparison_graphs(states, stations, valid_times, mode, scenario_names)
     empty_delta = _pct_change(a_empty_auc, b_empty_auc) if compare_mode else 0.0
     full_delta = _pct_change(a_full_auc, b_full_auc) if compare_mode else 0.0
 
-    # Build summary HTML
     if compare_mode:
         summary_html = f"""
 <div class="rk-summary">
@@ -172,7 +153,6 @@ def build_comparison_graphs(states, stations, valid_times, mode, scenario_names)
   </div>
 """
     else:
-        # Single-scenario mode: ONE summary + ONE set of charts
         summary_html = f"""
 <div class="rk-summary">
   <div class="rk-summary-title">System stress summary (lower is better)</div>
@@ -338,16 +318,258 @@ def build_comparison_graphs(states, stations, valid_times, mode, scenario_names)
     }});
   }}
 
-  // Always draw A charts
   draw("a_empty", "Empty", {a_empty}, "#d73027", "rgba(215,48,39,0.15)");
   draw("a_full",  "Full",  {a_full},  "#4575b4", "rgba(69,117,180,0.15)");
 
-  // Only draw B charts in compare mode
   const compareMode = {str(compare_mode).lower()};
   if (compareMode) {{
     draw("b_empty", "Empty", {b_empty}, "#d73027", "rgba(215,48,39,0.15)");
     draw("b_full",  "Full",  {b_full},  "#4575b4", "rgba(69,117,180,0.15)");
   }}
+}})();
+</script>
+"""
+    )
+
+
+# -------------------------------------------------------------------
+# ✅ NEW: Multi-scenario (grid4) graphs: 4 scenarios => 8 charts
+# -------------------------------------------------------------------
+def build_multi_graphs(states, stations, valid_times, mode, scenario_names):
+    """
+    Multi-scenario dashboard graphs.
+
+    Expects:
+      states: list of up to 4 state dicts
+      scenario_names: same length
+    Renders:
+      - One table summary with AUC/Peak for Empty/Full
+      - Relative deltas vs scenario 0
+      - 2 charts per scenario (Empty + Full) => 8 charts if 4 scenarios
+    """
+    if not states:
+        return folium.Element("<div></div>")
+
+    labels = _labels(valid_times, mode)
+
+    # compute all series
+    series = []
+    for st in states:
+        e, f = _counts(st, stations, valid_times)
+        series.append((e, f))
+
+    # baseline is first scenario
+    base_empty_auc = _auc(series[0][0])
+    base_full_auc = _auc(series[0][1])
+
+    # build summary rows
+    rows_html = ""
+    for i, (e, f) in enumerate(series):
+        name = scenario_names[i] if i < len(scenario_names) else f"Scenario {i+1}"
+        e_auc = _auc(e)
+        f_auc = _auc(f)
+        e_peak = _peak(e)
+        f_peak = _peak(f)
+
+        if i == 0:
+            e_delta = ""
+            f_delta = ""
+        else:
+            e_red = _pct_reduction(base_empty_auc, e_auc)
+            f_red = _pct_reduction(base_full_auc, f_auc)
+            # show "+X%" improvement; negative means worse
+            e_delta = f"{e_red:+.1f}%"
+            f_delta = f"{f_red:+.1f}%"
+
+        rows_html += f"""
+<tr>
+  <td class="rk-td-name">{name}</td>
+  <td class="rk-td">{e_auc}</td>
+  <td class="rk-td">{e_peak}</td>
+  <td class="rk-td rk-td-delta">{e_delta}</td>
+  <td class="rk-td">{f_auc}</td>
+  <td class="rk-td">{f_peak}</td>
+  <td class="rk-td rk-td-delta">{f_delta}</td>
+</tr>
+"""
+
+    # chart grid (rows per scenario, 2 columns)
+    chart_cells = ""
+    for i in range(len(series)):
+        name = scenario_names[i] if i < len(scenario_names) else f"Scenario {i+1}"
+        chart_cells += f"""
+<div class="rk-grid-row">
+  <div class="rk-chart-cell">
+    <div class="rk-chart-title"><b>{name}</b> — Empty</div>
+    <div class="chart-box"><canvas id="s{i}_empty"></canvas></div>
+  </div>
+  <div class="rk-chart-cell">
+    <div class="rk-chart-title"><b>{name}</b> — Full</div>
+    <div class="chart-box"><canvas id="s{i}_full"></canvas></div>
+  </div>
+</div>
+"""
+
+    # embed series data
+    data_js = ""
+    for i, (e, f) in enumerate(series):
+        data_js += f"""
+draw("s{i}_empty", "Empty", {e}, "#d73027", "rgba(215,48,39,0.15)");
+draw("s{i}_full",  "Full",  {f}, "#4575b4", "rgba(69,117,180,0.15)");
+"""
+
+    return folium.Element(
+        f"""
+<style>
+.chart-box {{
+  height: 280px;
+  position: relative;
+}}
+.chart-box canvas {{
+  width: 100% !important;
+  height: 100% !important;
+}}
+
+.rk-wrap {{
+  max-width: 1800px;
+  margin: 28px auto 120px auto;
+  padding: 0 24px;
+  font-family: sans-serif;
+}}
+
+.rk-title {{
+  font-size: 18px;
+  font-weight: 800;
+  margin: 0 0 12px 0;
+}}
+
+.rk-sub {{
+  font-size: 12px;
+  color: #333;
+  margin: 0 0 16px 0;
+}}
+
+.rk-table {{
+  width: 100%;
+  border-collapse: collapse;
+  margin: 10px 0 18px 0;
+  font-size: 13px;
+}}
+.rk-table th {{
+  text-align: left;
+  font-weight: 800;
+  padding: 10px 10px;
+  border-bottom: 2px solid #ddd;
+}}
+.rk-table td {{
+  padding: 9px 10px;
+  border-bottom: 1px solid #eee;
+}}
+.rk-td-name {{
+  font-weight: 800;
+}}
+.rk-td-delta {{
+  font-weight: 800;
+  color: #111;
+}}
+
+.rk-chart-title {{
+  font-size: 13px;
+  margin: 0 0 6px 0;
+}}
+
+.rk-grid {{
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}}
+
+.rk-grid-row {{
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+}}
+
+@media (max-width: 1100px) {{
+  .rk-grid-row {{
+    grid-template-columns: 1fr;
+  }}
+}}
+</style>
+
+<div class="rk-wrap">
+  <div class="rk-title">System stress — 4-scenario dashboard</div>
+  <div class="rk-sub">
+    Empty = stations ≤ {int(EMPTY_THRESHOLD*100)}% bikes &nbsp;|&nbsp;
+    Full = stations ≥ {int(FULL_THRESHOLD*100)}% bikes &nbsp;|&nbsp;
+    “Δ vs baseline” is relative to the first scenario in this view.
+  </div>
+
+  <table class="rk-table">
+    <thead>
+      <tr>
+        <th>Scenario</th>
+        <th>Empty AUC</th>
+        <th>Empty peak</th>
+        <th>Δ vs baseline</th>
+        <th>Full AUC</th>
+        <th>Full peak</th>
+        <th>Δ vs baseline</th>
+      </tr>
+    </thead>
+    <tbody>
+      {rows_html}
+    </tbody>
+  </table>
+
+  <div class="rk-grid">
+    {chart_cells}
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+(function() {{
+  const labels = {labels};
+
+  function draw(id, label, data, color, fill) {{
+    const el = document.getElementById(id);
+    if (!el) return;
+    new Chart(el, {{
+      type: "line",
+      data: {{
+        labels,
+        datasets: [{{
+          label,
+          data,
+          borderColor: color,
+          backgroundColor: fill,
+          fill: true,
+          tension: 0.25,
+          pointRadius: 0
+        }}]
+      }},
+      options: {{
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {{
+          legend: {{ display: false }},
+          tooltip: {{ enabled: true }}
+        }},
+        scales: {{
+          y: {{
+            beginAtZero: true,
+            title: {{ display: true, text: "Station count (lower is better)" }}
+          }},
+          x: {{
+            title: {{ display: true, text: "{'Time (HH:MM)' if mode == 't_min' else 'Hour'}" }}
+          }}
+        }}
+      }}
+    }});
+  }}
+
+  {data_js}
 }})();
 </script>
 """

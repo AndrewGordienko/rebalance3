@@ -10,6 +10,7 @@ from rebalance3.viz.maps.render import render_map_document
 from rebalance3.viz.charts.graphs import (
     build_comparison_graphs,
     build_single_graphs,
+    build_multi_graphs,  # ✅ NEW
 )
 
 _LIB_ROOT = Path(__file__).resolve().parents[1]
@@ -23,6 +24,7 @@ def serve_comparison(
     stations_file=DEFAULT_TORONTO_STATIONS_FILE,
     graphs=True,
     title="Bike Share Rebalancing — Viewer",
+    layout: str | None = None,  # ✅ NEW: "grid4" or None
 ):
     """
     Scenarios: list[Scenario]
@@ -65,44 +67,90 @@ def serve_comparison(
     def _time_qp(t_cur: int) -> str:
         return f"t={t_cur}" if mode == "t_min" else f"hour={t_cur}"
 
+    def _initial_view_mode() -> str:
+        """
+        View modes:
+          - "single": one map, 2 graphs
+          - "compare": two maps, 4 graphs
+          - "grid4": four maps, 8 graphs (first 4 scenarios by default)
+        Priority:
+          1) explicit query param view=...
+          2) serve_comparison(layout="grid4")
+          3) fallback old behavior
+        """
+        v = request.args.get("view", "", type=str).strip().lower()
+        if v in {"single", "compare", "grid4"}:
+            return v
+        if layout and str(layout).lower() == "grid4":
+            return "grid4"
+        return "single"
+
+    def _clamp_idx(i: int) -> int:
+        if not scenarios:
+            return 0
+        return max(0, min(int(i), len(scenarios) - 1))
+
     @app.route("/")
     def _index():
         t_cur = _resolve_time()
-
-        # which scenario to show in single-map mode
-        s_idx = request.args.get("s", 0, type=int)
-        if s_idx < 0 or s_idx >= len(scenarios):
-            s_idx = 0
-
-        compare = request.args.get("compare", 0, type=int)
-        compare = 1 if compare else 0
-
-        # compare selection
-        a_idx = request.args.get("a", 0, type=int)
-        b_idx = request.args.get("b", 1, type=int)
-
-        if a_idx < 0 or a_idx >= len(scenarios):
-            a_idx = 0
-        if b_idx < 0 or b_idx >= len(scenarios):
-            b_idx = min(1, len(scenarios) - 1)
-
         qp_time = _time_qp(t_cur)
 
-        # single map URL
-        single_url = f"/map/{s_idx}?{qp_time}"
+        view = _initial_view_mode()
 
-        # compare URLs
+        # old selection params
+        s_idx = _clamp_idx(request.args.get("s", 0, type=int))
+
+        a_idx = _clamp_idx(request.args.get("a", 0, type=int))
+        b_idx = _clamp_idx(request.args.get("b", 1, type=int))
+
+        # grid indices (defaults: first 4)
+        g0 = _clamp_idx(request.args.get("g0", 0, type=int))
+        g1 = _clamp_idx(request.args.get("g1", 1, type=int))
+        g2 = _clamp_idx(request.args.get("g2", 2, type=int))
+        g3 = _clamp_idx(request.args.get("g3", 3, type=int))
+
+        # avoid duplicates in grid: if user gave duplicates, we still render them,
+        # but dropdowns will make it obvious.
+
+        single_url = f"/map/{s_idx}?{qp_time}"
         map_a_url = f"/map/{a_idx}?{qp_time}"
         map_b_url = f"/map/{b_idx}?{qp_time}"
 
+        grid_urls = [
+            (g0, f"/map/{g0}?{qp_time}"),
+            (g1, f"/map/{g1}?{qp_time}"),
+            (g2, f"/map/{g2}?{qp_time}"),
+            (g3, f"/map/{g3}?{qp_time}"),
+        ]
+
         # ---------------------------------------------------------
         # ✅ Graphs:
-        #   - Compare mode: show A vs B (4 charts)
-        #   - Single mode: show selected scenario only (2 charts)
+        #   - grid4: 4 scenarios => 8 charts + 1 summary table
+        #   - compare: A vs B => 4 charts + compare summary
+        #   - single: 1 scenario => 2 charts + single summary
         # ---------------------------------------------------------
         graphs_html = ""
         if graphs:
-            if compare and len(scenarios) >= 2:
+            if view == "grid4":
+                # Only render up to 4 maps/graph sets. If fewer scenarios exist, use what we have.
+                idxs = [g0, g1, g2, g3]
+                idxs = [i for i in idxs if 0 <= i < len(scenarios)]
+                # if user has <4 scenarios, just use all
+                if len(scenarios) <= 4:
+                    idxs = list(range(len(scenarios)))
+
+                states = [scenario_states[i] for i in idxs]
+                names = [scenarios[i].name for i in idxs]
+
+                graphs_html = build_multi_graphs(
+                    states=states,
+                    stations=stations,
+                    valid_times=valid_times,
+                    mode=mode,
+                    scenario_names=names,
+                ).render()
+
+            elif view == "compare" and len(scenarios) >= 2:
                 graphs_html = build_comparison_graphs(
                     states=[scenario_states[a_idx], scenario_states[b_idx]],
                     stations=stations,
@@ -119,27 +167,25 @@ def serve_comparison(
                     scenario_name=scenarios[s_idx].name,
                 ).render()
 
-        # build dropdown options
-        scenario_opts = "\n".join(
-            [
-                f'<option value="{i}" {"selected" if i == s_idx else ""}>{scenarios[i].name}</option>'
-                for i in range(len(scenarios))
-            ]
-        )
+        def _scenario_options(selected: int) -> str:
+            return "\n".join(
+                [
+                    f'<option value="{i}" {"selected" if i == selected else ""}>{scenarios[i].name}</option>'
+                    for i in range(len(scenarios))
+                ]
+            )
 
-        a_opts = "\n".join(
-            [
-                f'<option value="{i}" {"selected" if i == a_idx else ""}>{scenarios[i].name}</option>'
-                for i in range(len(scenarios))
-            ]
-        )
+        scenario_opts_single = _scenario_options(s_idx)
+        a_opts = _scenario_options(a_idx)
+        b_opts = _scenario_options(b_idx)
 
-        b_opts = "\n".join(
-            [
-                f'<option value="{i}" {"selected" if i == b_idx else ""}>{scenarios[i].name}</option>'
-                for i in range(len(scenarios))
-            ]
-        )
+        g0_opts = _scenario_options(g0)
+        g1_opts = _scenario_options(g1)
+        g2_opts = _scenario_options(g2)
+        g3_opts = _scenario_options(g3)
+
+        def _checked(v: str) -> str:
+            return "checked" if view == v else ""
 
         return f"""
 <!DOCTYPE html>
@@ -196,6 +242,12 @@ html, body {{
   font-size: 13px;
 }}
 
+.ctrl .mini {{
+  font-size: 12px;
+  color: #333;
+  font-weight: 700;
+}}
+
 select {{
   border: 1px solid #ddd;
   border-radius: 8px;
@@ -214,6 +266,14 @@ label {{
   padding: 0 24px 18px 24px;
 }}
 
+.map-frame {{
+  width: 100%;
+  height: 65vh;
+  min-height: 480px;
+  border: 0;
+  background: transparent;
+}}
+
 #single-map {{
   width: 100%;
 }}
@@ -224,17 +284,22 @@ label {{
   gap: 24px;
 }}
 
-.map-frame {{
-  width: 100%;
-  height: 75vh;
-  min-height: 520px;
-  border: 0;
-  background: transparent;
+#grid4-maps {{
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
 }}
 
 @media (max-width: 1100px) {{
   #compare-maps {{
     grid-template-columns: 1fr;
+  }}
+  #grid4-maps {{
+    grid-template-columns: 1fr;
+  }}
+  .map-frame {{
+    height: 70vh;
+    min-height: 520px;
   }}
 }}
 
@@ -263,20 +328,33 @@ window.addEventListener("message", (e) => {{
   }});
 }});
 
+function applyViewMode(mode) {{
+  const url = new URL(window.location.href);
+  url.searchParams.set("view", mode);
+
+  // keep current time qp if present
+  window.location.href = url.toString();
+}}
+
 function applyControls() {{
-  const compare = document.getElementById("compare-toggle").checked ? 1 : 0;
+  const mode = document.querySelector('input[name="viewmode"]:checked').value;
 
   const url = new URL(window.location.href);
-  url.searchParams.set("compare", String(compare));
+  url.searchParams.set("view", mode);
 
-  if (!compare) {{
+  if (mode === "single") {{
     const s = document.getElementById("scenario-single").value;
     url.searchParams.set("s", s);
-  }} else {{
+  }} else if (mode === "compare") {{
     const a = document.getElementById("scenario-a").value;
     const b = document.getElementById("scenario-b").value;
     url.searchParams.set("a", a);
     url.searchParams.set("b", b);
+  }} else if (mode === "grid4") {{
+    url.searchParams.set("g0", document.getElementById("scenario-g0").value);
+    url.searchParams.set("g1", document.getElementById("scenario-g1").value);
+    url.searchParams.set("g2", document.getElementById("scenario-g2").value);
+    url.searchParams.set("g3", document.getElementById("scenario-g3").value);
   }}
 
   window.location.href = url.toString();
@@ -294,28 +372,50 @@ function applyControls() {{
 
       <div class="ctrl">
         <label>
-          <input id="compare-toggle" type="checkbox" onchange="applyControls()" {"checked" if compare else ""}/>
-          Compare
+          <input type="radio" name="viewmode" value="single" onchange="applyControls()" {_checked("single")} />
+          Single
+        </label>
+        <label style="margin-left:10px;">
+          <input type="radio" name="viewmode" value="compare" onchange="applyControls()" {_checked("compare")} />
+          Compare (2)
+        </label>
+        <label style="margin-left:10px;">
+          <input type="radio" name="viewmode" value="grid4" onchange="applyControls()" {_checked("grid4")} />
+          Grid (4)
         </label>
       </div>
 
-      <div class="ctrl" id="single-controls" style="display:{'none' if compare else 'inline-flex'};">
+      <div class="ctrl" id="single-controls" style="display:{'inline-flex' if view == 'single' else 'none'};">
         <span>Scenario</span>
         <select id="scenario-single" onchange="applyControls()">
-          {scenario_opts}
+          {scenario_opts_single}
         </select>
       </div>
 
-      <div class="ctrl" id="compare-controls" style="display:{'inline-flex' if compare else 'none'};">
-        <span>A</span>
+      <div class="ctrl" id="compare-controls" style="display:{'inline-flex' if view == 'compare' else 'none'};">
+        <span class="mini">A</span>
         <select id="scenario-a" onchange="applyControls()">
           {a_opts}
         </select>
 
-        <span style="margin-left:8px;">B</span>
+        <span class="mini" style="margin-left:8px;">B</span>
         <select id="scenario-b" onchange="applyControls()">
           {b_opts}
         </select>
+      </div>
+
+      <div class="ctrl" id="grid-controls" style="display:{'inline-flex' if view == 'grid4' else 'none'};">
+        <span class="mini">TL</span>
+        <select id="scenario-g0" onchange="applyControls()">{g0_opts}</select>
+
+        <span class="mini" style="margin-left:8px;">TR</span>
+        <select id="scenario-g1" onchange="applyControls()">{g1_opts}</select>
+
+        <span class="mini" style="margin-left:8px;">BL</span>
+        <select id="scenario-g2" onchange="applyControls()">{g2_opts}</select>
+
+        <span class="mini" style="margin-left:8px;">BR</span>
+        <select id="scenario-g3" onchange="applyControls()">{g3_opts}</select>
       </div>
 
     </div>
@@ -324,13 +424,20 @@ function applyControls() {{
 
 <div id="maps">
 
-  <div id="single-map" style="display:{'none' if compare else 'block'};">
+  <div id="single-map" style="display:{'block' if view == 'single' else 'none'};">
     <iframe class="map-frame" src="{single_url}"></iframe>
   </div>
 
-  <div id="compare-maps" style="display:{'grid' if compare else 'none'};">
+  <div id="compare-maps" style="display:{'grid' if view == 'compare' else 'none'};">
     <iframe class="map-frame" src="{map_a_url}"></iframe>
     <iframe class="map-frame" src="{map_b_url}"></iframe>
+  </div>
+
+  <div id="grid4-maps" style="display:{'grid' if view == 'grid4' else 'none'};">
+    <iframe class="map-frame" src="{grid_urls[0][1]}"></iframe>
+    <iframe class="map-frame" src="{grid_urls[1][1]}"></iframe>
+    <iframe class="map-frame" src="{grid_urls[2][1]}"></iframe>
+    <iframe class="map-frame" src="{grid_urls[3][1]}"></iframe>
   </div>
 
 </div>
@@ -350,7 +457,6 @@ function applyControls() {{
 
         t_cur = _resolve_time()
         scenario = scenarios[i]
-
         bucket_minutes = getattr(scenario, "bucket_minutes", 15) or 15
 
         return render_map_document(
