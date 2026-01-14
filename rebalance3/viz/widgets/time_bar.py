@@ -11,9 +11,10 @@ def build_time_bar(state, stations, valid_times, t_current, mode, *, truck_moves
       - ticks = truck move times (vertical markers on top of bars)
 
     IMPORTANT FIX:
-      - Clicking a bar now works in BOTH:
-          * iframe compare mode (postMessage)
-          * single-map mode (updates window.location + reload)
+      - Clicking the timebar now updates the current page URL (?t= or ?hour=),
+        so it works in:
+          - single-map view (no iframe)
+          - comparison view (inside iframe)
     """
 
     # ----------------------------
@@ -35,6 +36,8 @@ def build_time_bar(state, stations, valid_times, t_current, mode, *, truck_moves
 
     max_count = max(full_counts.values(), default=0)
 
+    key = "t" if mode == "t_min" else "hour"
+
     bars = []
     for t in valid_times:
         if max_count > 0:
@@ -51,7 +54,7 @@ def build_time_bar(state, stations, valid_times, t_current, mode, *, truck_moves
         bars.append(
             f"""
             <div class="timebar-item"
-                 onclick="setTime({t})"
+                 onclick="timebarSetTime({t})"
                  data-label="{label}"
                  data-tmin="{t}">
               <div class="timebar-bar"
@@ -67,9 +70,19 @@ def build_time_bar(state, stations, valid_times, t_current, mode, *, truck_moves
     move_counts = {}
     if truck_moves:
         for m in truck_moves:
-            if getattr(m, "t_min", None) is None:
+            tm = None
+            if isinstance(m, dict):
+                tm = m.get("t_min", None)
+            else:
+                tm = getattr(m, "t_min", None)
+
+            if tm is None:
                 continue
-            tm = int(m.t_min)
+            try:
+                tm = int(tm)
+            except Exception:
+                continue
+
             move_counts[tm] = move_counts.get(tm, 0) + 1
 
     move_ticks_html = []
@@ -90,8 +103,6 @@ def build_time_bar(state, stations, valid_times, t_current, mode, *, truck_moves
             </div>
             """
         )
-
-    key = "t" if mode == "t_min" else "hour"
 
     return folium.Element(
         f"""
@@ -185,24 +196,6 @@ def build_time_bar(state, stations, valid_times, t_current, mode, *, truck_moves
 </div>
 
 <script>
-// ---------------------------------------------------------
-// FIX: clicking timebar works in iframe OR single-map mode
-// ---------------------------------------------------------
-function setTime(t) {{
-  try {{
-    if (window.parent && window.parent !== window) {{
-      // compare mode (iframe)
-      window.parent.postMessage({{ type: "set-time", value: t }}, "*");
-      return;
-    }}
-  }} catch (e) {{}}
-
-  // single-map mode (no iframe) => reload this page with updated query param
-  const url = new URL(window.location.href);
-  url.searchParams.set("{key}", String(t));
-  window.location.href = url.toString();
-}}
-
 function timebarMove(evt) {{
   const label = document.getElementById("timebar-label");
   const item = evt.target.closest(".timebar-item");
@@ -218,6 +211,14 @@ function timebarMove(evt) {{
 
 function timebarHide() {{
   document.getElementById("timebar-label").style.display = "none";
+}}
+
+function timebarSetTime(t) {{
+  // ✅ Works both in iframe and normal page:
+  // just update the URL param and reload the map
+  const url = new URL(window.location.href);
+  url.searchParams.set("{key}", t);
+  window.location.href = url.toString();
 }}
 
 function layoutMoveTicks() {{

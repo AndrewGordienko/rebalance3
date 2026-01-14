@@ -3,9 +3,10 @@ from flask import Flask, request
 from pathlib import Path
 
 from rebalance3.util.stations import load_stations
-from rebalance3.viz.state_loader import load_station_state, snap_time
-from rebalance3.viz.stations_map import _build_map_document
-from rebalance3.viz.graphs import build_comparison_graphs
+from rebalance3.viz.data.state_loader import load_station_state
+from rebalance3.viz.data.time_snap import snap_time
+from rebalance3.viz.maps.render import render_map_document
+from rebalance3.viz.charts.graphs import build_comparison_graphs
 
 _LIB_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_TORONTO_STATIONS_FILE = _LIB_ROOT / "station_information.json"
@@ -19,21 +20,36 @@ def serve_comparison(
     graphs=True,
     title="Bike Share Rebalancing — Viewer",
 ):
+    """
+    Scenarios: list[Scenario]
+      Scenario fields expected:
+        - .name
+        - .state_csv (Path)
+        - .bucket_minutes (int)  (optional but preferred)
+        - .meta dict with optional "truck_moves"
+    """
+
     stations = load_stations(stations_file)
 
     scenario_states = []
     mode = None
     valid_times = None
 
+    # Load all scenario states
     for s in scenarios:
         state, s_mode, s_times = load_station_state(s.state_csv)
         scenario_states.append(state)
+
+        # all states should share the same time index
         mode = s_mode
         valid_times = s_times
 
-    app = Flask(__name__)
+    if mode is None:
+        mode = "t_min"
+    if valid_times is None:
+        valid_times = []
 
-    scenario_names = [s.name for s in scenarios]
+    app = Flask(__name__)
 
     def _resolve_time():
         if not valid_times:
@@ -99,6 +115,7 @@ def serve_comparison(
                 for i in range(len(scenarios))
             ]
         )
+
         b_opts = "\n".join(
             [
                 f'<option value="{i}" {"selected" if i == b_idx else ""}>{scenarios[i].name}</option>'
@@ -316,7 +333,9 @@ function applyControls() {{
         t_cur = _resolve_time()
         scenario = scenarios[i]
 
-        return _build_map_document(
+        bucket_minutes = getattr(scenario, "bucket_minutes", 15) or 15
+
+        return render_map_document(
             stations=stations,
             state=scenario_states[i],
             mode=mode,
@@ -324,6 +343,7 @@ function applyControls() {{
             t_cur=t_cur,
             title=scenario.name,
             truck_moves=scenario.meta.get("truck_moves"),
+            bucket_minutes=bucket_minutes,
         )
 
     app.run(host=host, port=port)

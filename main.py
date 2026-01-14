@@ -3,7 +3,7 @@ from rebalance3.scenarios.baseline import baseline_scenario
 from rebalance3.scenarios.midnight import midnight_scenario
 from rebalance3.scenarios.trucks import truck_scenario
 
-from rebalance3.viz.comparison import serve_comparison
+from rebalance3.viz.app.comparison import serve_comparison
 
 
 TRIPS = "Bike share ridership 2024-09.csv"
