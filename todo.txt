@@ -27,3 +27,10 @@ fix up main.py ux
 feel like the algo can do a better job at reducing empty/full
 also compare when we let trucks just go once or five times per hour
 also some sort of quantity way to compare the graphs not just eyeballing them
+
+--
+
+truck rebalancing algo is kinda bad still
+having four graphs at once
+sentiment analysis
+docs
